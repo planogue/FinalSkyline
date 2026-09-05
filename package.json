@@ -16,7 +16,8 @@
     "probe:intercept": "npx esbuild tools/intercept-probe.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-intercept.mjs --log-level=warning && node node_modules/.final-skyline-intercept.mjs",
     "test:online": "npx esbuild tools/online-service-regression.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=node_modules/.final-skyline-online-service.mjs --log-level=warning && node node_modules/.final-skyline-online-service.mjs",
     "probe:render": "npx esbuild tools/render-probe.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-render.mjs --log-level=warning && node node_modules/.final-skyline-render.mjs",
-    "chart:routes": "npx esbuild tools/route-chart.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-routes.mjs --log-level=warning && node node_modules/.final-skyline-routes.mjs"
+    "chart:routes": "npx esbuild tools/route-chart.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-routes.mjs --log-level=warning && node node_modules/.final-skyline-routes.mjs",
+    "test:db": "node tools/db-test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

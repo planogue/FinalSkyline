@@ -698,6 +698,114 @@ button:focus-visible, summary:focus-visible, input:focus-visible {
   color: #fff;
 }
 
+.friends {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+}
+
+.friends-title {
+  color: #cfdae7;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.friends-empty {
+  margin: 4px 0 0;
+  color: #7d8898;
+  font-size: 12px;
+}
+
+.friend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  color: #dfe6ee;
+  font-size: 13px;
+  /* On a phone the buttons drop to their own line rather than crushing the
+     name down to an ellipsis. */
+  flex-wrap: wrap;
+}
+
+.friend-row + .friend-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* An invitation is the one thing here on a clock, so it gets a lit border. */
+.friend-row.invite {
+  margin: 4px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(78, 197, 255, 0.4);
+  border-radius: 10px;
+  background: rgba(78, 197, 255, 0.08);
+}
+
+.friend-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: #4d5765;
+}
+
+.friend-dot.on {
+  background: #59e07a;
+  box-shadow: 0 0 0 3px rgba(89, 224, 122, 0.2);
+}
+
+/* The name takes the slack so every button lines up down the right, but it
+   never shrinks past legibility — the row wraps instead. */
+.friend-name {
+  flex: 1 1 auto;
+  min-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.friend-presence {
+  flex: none;
+  color: #7d8898;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.invite-clock {
+  flex: none;
+  min-width: 34px;
+  text-align: right;
+  color: #7de3ff;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  font-size: 13px;
+}
+
+.invite-clock.urgent {
+  color: #ff8d83;
+}
+
+.btn.small {
+  padding: 5px 11px;
+  font-size: 12px;
+  flex: none;
+}
+
+.friend-add {
+  display: flex;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.friend-add .auth-input {
+  flex: 1 1 auto;
+}
+
 /* Email sign-in is the fallback path now, so it collapses out of the way. */
 .auth-email {
   margin-top: 10px;

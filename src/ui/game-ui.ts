@@ -15,7 +15,7 @@ import {
 import type { MetaSave, PanelId } from '../core/types';
 import { audio } from '../core/audio';
 import type { OnlineAction } from '../online/actions';
-import type { OnlineState } from '../online/service';
+import type { MatchInvite, OnlineState } from '../online/service';
 import {
   aaCost,
   aaRadius,
@@ -90,6 +90,12 @@ export interface UiHost {
   signInWithGoogle(): Promise<void>;
   signInAsGuest(): Promise<void>;
   signOut(): Promise<void>;
+  addFriend(username: string): Promise<void>;
+  respondFriend(userId: string, accept: boolean): Promise<void>;
+  removeFriend(userId: string): Promise<void>;
+  sendInvite(userId: string): Promise<void>;
+  cancelInvite(inviteId: string): Promise<void>;
+  respondInvite(inviteId: string, accept: boolean): Promise<void>;
   sendOnlineAction(action: OnlineAction): void;
   saveProgress(): void;
   quitToMenu(): void;
@@ -857,12 +863,17 @@ export class GameUI {
                 : 'none';
 
     if (want !== this.overlayKind || this.overlayDirty) {
+      const active = document.activeElement;
+      const keepFocus =
+        active instanceof HTMLElement && this.overlay.contains(active) ? active.dataset.focusKey ?? null : null;
+      const caret = active instanceof HTMLInputElement ? active.selectionStart : null;
       this.overlayDirty = false;
       this.overlayKind = want;
       this.overlay.className = `overlay${want === 'upgrades' ? ' upgrades' : ''}`;
       this.overlay.innerHTML = '';
       this.overlay.style.display = want === 'none' ? 'none' : '';
       this.upgradeUpdates = [];
+      this.menuUpdates = [];
       if (want === 'menu') this.buildMenu(meta);
       else if (want === 'shop') this.buildShop(meta);
       else if (want === 'pause') this.buildPause();
@@ -873,11 +884,21 @@ export class GameUI {
         if (!node.dataset.hint) node.dataset.hint = 'Tab ↵';
       });
       if (want !== 'none' && document.activeElement instanceof HTMLElement && !this.overlay.contains(document.activeElement)) document.activeElement.blur();
+      if (keepFocus) {
+        const again = this.overlay.querySelector<HTMLElement>(`[data-focus-key="${keepFocus}"]`);
+        again?.focus();
+        if (again instanceof HTMLInputElement && caret !== null) again.setSelectionRange(caret, caret);
+      }
     }
     if (want === 'upgrades') for (const u of this.upgradeUpdates) u();
+    if (want === 'menu') for (const u of this.menuUpdates) u();
   }
 
   private upgradeUpdates: CardUpdate[] = [];
+  /** Ticking text on the menu — the invitation countdowns. */
+  private menuUpdates: CardUpdate[] = [];
+  /** What the player has typed into the add-friend box, kept across rebuilds. */
+  private friendDraft = '';
 
   private buildMenu(meta: MetaSave): void {
     const ui = this.host.ui;
@@ -1085,12 +1106,181 @@ export class GameUI {
         row.append(queue, signOut);
       }
       card.appendChild(row);
+      card.appendChild(this.buildFriendsPanel(state));
     }
 
     const message = el('p', `online-message${state.phase === 'error' ? ' error' : ''}`);
     message.textContent = state.message;
     card.appendChild(message);
     return card;
+  }
+
+  /**
+   * Friends, who is online, and direct invitations. The whole block is rebuilt
+   * whenever the poll finds something new, so nothing here may hold state that
+   * the player can see — the countdowns tick through `menuUpdates` instead.
+   */
+  private buildFriendsPanel(state: OnlineState): HTMLElement {
+    const panel = el('section', 'friends');
+    panel.appendChild(el('div', 'friends-title', 'Friends'));
+
+    // --- invitations first: one of them is on a 90-second clock ------------
+    for (const invite of state.invites) {
+      panel.appendChild(this.buildInviteRow(invite));
+    }
+
+    // --- someone wants to be added ----------------------------------------
+    for (const friend of state.friends.filter((f) => f.status === 'incoming')) {
+      const row = el('div', 'friend-row');
+      row.append(el('span', 'friend-name', `${friend.username} wants to be friends`));
+      const accept = el('button', 'btn small', 'Accept');
+      accept.addEventListener('click', () => {
+        audio.click();
+        void this.host.respondFriend(friend.userId, true);
+      });
+      const decline = el('button', 'btn ghost small', 'Decline');
+      decline.addEventListener('click', () => {
+        audio.click();
+        void this.host.respondFriend(friend.userId, false);
+      });
+      row.append(accept, decline);
+      panel.appendChild(row);
+    }
+
+    // --- the list itself ---------------------------------------------------
+    const invitedIds = new Set(
+      state.invites.filter((i) => i.direction === 'outgoing').map((i) => i.userId),
+    );
+    const accepted = state.friends.filter((f) => f.status === 'accepted');
+    const inMatch = state.phase === 'matched';
+
+    for (const friend of accepted) {
+      const row = el('div', 'friend-row');
+      const dot = el('span', `friend-dot${friend.online ? ' on' : ''}`);
+      dot.title = friend.online ? 'Online now' : 'Offline';
+      const name = el('span', 'friend-name');
+      name.textContent = friend.username;
+      const presence = el('span', 'friend-presence', friend.online ? 'online' : 'offline');
+      row.append(dot, name, presence);
+
+      const invite = el('button', 'btn small', 'Invite');
+      const alreadyAsked = invitedIds.has(friend.userId);
+      invite.disabled = !friend.online || alreadyAsked || inMatch;
+      invite.title = !friend.online
+        ? `${friend.username} is not online`
+        : alreadyAsked
+          ? 'Already invited — waiting for an answer'
+          : `Invite ${friend.username} to a ${onlineDurationLabel(onlineDuration(this.host.ui.duration))} match`;
+      invite.addEventListener('click', () => {
+        audio.click();
+        void this.host.sendInvite(friend.userId);
+      });
+
+      const remove = el('button', 'btn ghost small', '×');
+      remove.title = `Remove ${friend.username}`;
+      remove.addEventListener('click', () => {
+        audio.click();
+        void this.host.removeFriend(friend.userId);
+      });
+      row.append(invite, remove);
+      panel.appendChild(row);
+    }
+
+    // --- requests we sent, still unanswered --------------------------------
+    for (const friend of state.friends.filter((f) => f.status === 'outgoing')) {
+      const row = el('div', 'friend-row');
+      const name = el('span', 'friend-name');
+      name.textContent = friend.username;
+      row.append(el('span', 'friend-dot'), name, el('span', 'friend-presence', 'request sent'));
+      const cancel = el('button', 'btn ghost small', '×');
+      cancel.title = `Withdraw the request to ${friend.username}`;
+      cancel.addEventListener('click', () => {
+        audio.click();
+        void this.host.removeFriend(friend.userId);
+      });
+      row.appendChild(cancel);
+      panel.appendChild(row);
+    }
+
+    if (!accepted.length && !state.friends.length) {
+      panel.appendChild(el('p', 'friends-empty', 'Add a commander by name to see when they are online.'));
+    }
+
+    // --- add by name -------------------------------------------------------
+    const add = el('div', 'friend-add');
+    const input = el('input', 'auth-input');
+    input.placeholder = 'Commander name';
+    input.maxLength = 20;
+    input.autocomplete = 'off';
+    input.value = this.friendDraft;
+    input.dataset.focusKey = 'friend-add';
+    input.addEventListener('input', () => {
+      this.friendDraft = input.value;
+    });
+    const submit = () => {
+      audio.click();
+      const name = input.value;
+      this.friendDraft = '';
+      input.value = '';
+      void this.host.addFriend(name);
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') submit();
+    });
+    const addBtn = el('button', 'btn small', 'Add');
+    addBtn.addEventListener('click', submit);
+    add.append(input, addBtn);
+    panel.appendChild(add);
+
+    if (state.friendMessage) {
+      const note = el('p', 'online-message');
+      note.textContent = state.friendMessage;
+      panel.appendChild(note);
+    }
+    return panel;
+  }
+
+  /** One invitation, with the live countdown to its 90-second deadline. */
+  private buildInviteRow(invite: MatchInvite): HTMLElement {
+    const row = el('div', 'friend-row invite');
+    const label = el('span', 'friend-name');
+    const length = onlineDurationLabel(invite.durationSeconds);
+    label.textContent =
+      invite.direction === 'incoming'
+        ? `${invite.username} invites you — ${length}`
+        : `Waiting for ${invite.username} — ${length}`;
+    const clock = el('span', 'invite-clock');
+    row.append(label, clock);
+
+    // Rebuilt only when the poll finds news, so the seconds tick from here.
+    this.menuUpdates.push(() => {
+      const left = Math.max(0, Math.ceil((Date.parse(invite.expiresAt) - Date.now()) / 1000));
+      clock.textContent = `${left}s`;
+      clock.classList.toggle('urgent', left <= 15);
+    });
+
+    if (invite.direction === 'incoming') {
+      const accept = el('button', 'btn primary small', 'Accept');
+      accept.addEventListener('click', () => {
+        audio.init();
+        audio.click();
+        void this.host.respondInvite(invite.id, true);
+      });
+      const decline = el('button', 'btn ghost small', 'Decline');
+      decline.addEventListener('click', () => {
+        audio.click();
+        void this.host.respondInvite(invite.id, false);
+      });
+      row.append(accept, decline);
+    } else {
+      const cancel = el('button', 'btn ghost small', 'Cancel');
+      cancel.addEventListener('click', () => {
+        audio.click();
+        void this.host.cancelInvite(invite.id);
+      });
+      row.appendChild(cancel);
+    }
+    return row;
   }
 
   private buildShop(meta: MetaSave): void {

@@ -55,13 +55,25 @@ function fixture() {
   let nextTicket: OnlineMatchTicket | null = null;
   let read: ((matchId: string, cursor: number) => Promise<Page>) | null = null;
   let profileLoads = 0;
+  const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
+  let changes = 0;
+  const rpcHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {};
   const client = {
     auth: {
       getSession: async () => ({ data: { session: { user: { id: 'me' } } }, error: null }),
       onAuthStateChange(callback: typeof authCallback) { authCallback = callback; },
+      signOut: async () => ({ error: null }),
     },
     schema() {
-      return { rpc: async () => ({ data: nextTicket, error: null }) };
+      return {
+        async rpc(fn: string, args?: Record<string, unknown>) {
+          rpcCalls.push({ fn, args: args ?? {} });
+          const handler = rpcHandlers[fn];
+          if (handler) return { data: handler(args ?? {}), error: null };
+          // join_queue / queue_status keep their original behaviour.
+          return { data: nextTicket, error: null };
+        },
+      };
     },
     channel() { const channel = new Channel(); channels.push(channel); return channel; },
     removeChannel: async () => 'ok',
@@ -93,13 +105,17 @@ function fixture() {
       return query;
     },
   };
+  const entered: string[] = [];
   const service = new OnlineService(state, defaultMeta(), {
-    changed() {}, matched() {},
+    changed() { changes++; }, matched(value) { entered.push(value.matchId); },
     action(action) { if (action.type === 'pin-target') actions.push(action.x); },
   });
   (service as unknown as { client: unknown }).client = client;
   return {
-    service, state, actions, rows, queries, channels,
+    service, state, actions, rows, queries, channels, rpcCalls,
+    onRpc(fn: string, handler: (args: Record<string, unknown>) => unknown) { rpcHandlers[fn] = handler; },
+    entered,
+    get changes() { return changes; },
     auth(event: string, id: string | null) { authCallback(event, id ? { user: { id } } : null); },
     setTicket(value: OnlineMatchTicket | null) { nextTicket = value; },
     setRead(value: typeof read) { read = value; },
@@ -199,4 +215,96 @@ stale.channels[1].emit(row(11));
 assert.deepEqual(stale.actions, [10], 'Signing out must invalidate match callbacks');
 assert.equal(stale.state.phase, 'signed-out');
 
-console.log('PASS: same-user auth, paginated catch-up, reconnect ordering/deduplication, bounded retry recovery, and stale match cleanup.');
+// ---------------------------------------------------------------------------
+// Friends, presence and invitations
+// ---------------------------------------------------------------------------
+
+const social = fixture();
+let friendsState: Record<string, unknown> = { friends: [], invites: [], match: null };
+social.onRpc('friends_state', () => friendsState);
+social.onRpc('heartbeat', () => null);
+await social.service.init();
+await flush();
+
+assert(
+  social.rpcCalls.some((call) => call.fn === 'heartbeat'),
+  'Signing in starts the presence heartbeat',
+);
+assert(
+  social.rpcCalls.some((call) => call.fn === 'friends_state'),
+  'Signing in loads the friends panel',
+);
+
+// A friend list and one invitation in each direction.
+const soon = new Date(Date.now() + 90_000).toISOString();
+friendsState = {
+  friends: [
+    { userId: 'ada', username: 'Ada', online: true, status: 'accepted' },
+    { userId: 'bo', username: 'Boris', online: false, status: 'accepted' },
+    { userId: 'cy', username: 'Cyrus', online: true, status: 'incoming' },
+    // Malformed rows must be dropped rather than crashing the panel.
+    { userId: 'dud', username: 'Dud', online: true, status: 'nonsense' },
+    { username: 'no id' },
+    null,
+  ],
+  invites: [
+    { id: 'inv-1', userId: 'ada', username: 'Ada', durationSeconds: 900, direction: 'incoming', expiresAt: soon },
+    { id: 'inv-2', userId: 'bo', username: 'Boris', durationSeconds: 0, direction: 'outgoing', expiresAt: soon },
+    { id: 'bad', direction: 'sideways' },
+  ],
+  match: null,
+};
+await social.service.addFriend('Ada');
+await flush();
+assert.equal(social.state.friends.length, 3, 'Only well-formed friends are kept');
+assert.deepEqual(
+  social.state.friends.map((f) => f.status),
+  ['accepted', 'accepted', 'incoming'],
+  'Friendship states survive the round trip',
+);
+assert.equal(social.state.friends[0].online, true, 'Presence survives the round trip');
+assert.equal(social.state.invites.length, 2, 'Only well-formed invitations are kept');
+assert.equal(social.state.invites[0].durationSeconds, 900);
+assert.equal(social.state.invites[1].durationSeconds, 0, 'An unlimited invitation stays unlimited');
+
+// An unchanged poll must not wake the UI, or it would fight the player typing.
+const settled = social.changes;
+await flush();
+assert.equal(social.changes, settled, 'A poll that finds nothing new redraws nothing');
+
+// Declining leaves the player on the menu.
+social.onRpc('respond_invite', () => ({ ok: true, message: 'Invitation declined' }));
+await social.service.respondInvite('inv-1', false);
+await flush();
+assert.equal(social.entered.length, 0, 'Declining an invitation starts no match');
+
+// Accepting drops straight into the match the server just created.
+social.onRpc('respond_invite', () => ({ ok: true, message: 'Match starting', match: ticket('invited') }));
+await social.service.respondInvite('inv-1', true);
+await flush();
+assert.deepEqual(social.entered, ['invited'], 'Accepting an invitation enters the match');
+
+// The inviter is handed the same match by their own poll.
+const inviter = fixture();
+let inviterState: Record<string, unknown> = { friends: [], invites: [], match: null };
+inviter.onRpc('friends_state', () => inviterState);
+inviter.onRpc('heartbeat', () => null);
+await inviter.service.init();
+await flush();
+assert.equal(inviter.entered.length, 0, 'Nothing to join yet');
+inviterState = { friends: [], invites: [], match: ticket('accepted-by-friend') };
+await inviter.service.addFriend('anyone');
+await flush();
+assert.deepEqual(inviter.entered, ['accepted-by-friend'], 'The inviter joins when the invite is accepted');
+// The same ticket coming round again must not restart the match.
+await inviter.service.addFriend('anyone');
+await flush();
+assert.deepEqual(inviter.entered, ['accepted-by-friend'], 'A repeated ticket does not re-enter the match');
+
+// Signing out puts the panel away and stops the loops.
+await social.service.signOut();
+await flush();
+assert.deepEqual(social.state.friends, [], 'Signing out clears the friend list');
+assert.deepEqual(social.state.invites, [], 'Signing out clears invitations');
+
+console.log('PASS: same-user auth, paginated catch-up, reconnect ordering/deduplication, bounded retry recovery, stale match cleanup, and the friends/invitation flow.');

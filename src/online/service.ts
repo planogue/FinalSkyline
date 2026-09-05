@@ -13,6 +13,31 @@ export interface OnlineState {
   losses: number;
   stars: number;
   message: string;
+  /** Confirmed friends and the requests waiting on either side. */
+  friends: FriendSummary[];
+  /** Match invitations still standing, in both directions. */
+  invites: MatchInvite[];
+  /** Result of the last friends-panel action, shown under that panel. */
+  friendMessage: string;
+}
+
+export interface FriendSummary {
+  userId: string;
+  username: string;
+  /** Their last heartbeat is recent enough to call them online. */
+  online: boolean;
+  status: 'accepted' | 'incoming' | 'outgoing';
+}
+
+export interface MatchInvite {
+  id: string;
+  userId: string;
+  username: string;
+  /** 0 for an unlimited match. */
+  durationSeconds: number;
+  direction: 'incoming' | 'outgoing';
+  /** ISO timestamp; the client counts down to it. */
+  expiresAt: string;
 }
 
 export interface OnlineMatchTicket {
@@ -63,8 +88,16 @@ export function initialOnlineState(): OnlineState {
     losses: 0,
     stars: 0,
     message: configured ? 'Connecting…' : 'Online play is being connected',
+    friends: [],
+    invites: [],
+    friendMessage: '',
   };
 }
+
+/** How often the client tells the server it is still here. */
+const heartbeatMs = 30_000;
+/** How often the friends panel refreshes while the player sits on the menu. */
+const friendsPollMs = 4_000;
 
 export class OnlineService {
   private client: SupabaseClient | null;
@@ -81,6 +114,10 @@ export class OnlineService {
   private backlogRetryTimer = 0;
   private actionTail: Promise<void> = Promise.resolve();
   private profileLoad = 0;
+  private heartbeatTimer = 0;
+  private friendsTimer = 0;
+  /** Matches already entered this session, so a late poll cannot re-open one. */
+  private openedMatches = new Set<string>();
 
   constructor(
     private state: OnlineState,
@@ -209,7 +246,18 @@ export class OnlineService {
       return;
     }
     this.userId = null;
-    this.set({ phase: 'signed-out', username: null, wins: 0, losses: 0, stars: 0, message: 'Signed out' });
+    this.stopSocialLoops();
+    this.set({
+      phase: 'signed-out',
+      username: null,
+      wins: 0,
+      losses: 0,
+      stars: 0,
+      message: 'Signed out',
+      friends: [],
+      invites: [],
+      friendMessage: '',
+    });
   }
 
   async joinQueue(durationSeconds: number): Promise<void> {
@@ -337,7 +385,8 @@ export class OnlineService {
     this.eventBacklogReady = false;
     this.bufferedEvents = [];
     this.actionTail = Promise.resolve();
-    this.set({ phase: 'matched', message: `Matched with ${ticket.opponentUsername}` });
+    this.openedMatches.add(ticket.matchId);
+    this.set({ phase: 'matched', message: `Matched with ${ticket.opponentUsername}`, invites: [] });
     this.callbacks.matched(ticket);
 
     this.channel = this.client
@@ -441,12 +490,24 @@ export class OnlineService {
     if (this.userId !== (user?.id ?? null)) {
       window.clearInterval(this.queueTimer);
       this.queueTimer = 0;
+      this.stopSocialLoops();
       await this.disconnectMatch();
       if (token !== this.profileLoad) return;
     }
     if (!user) {
       this.userId = null;
-      this.set({ phase: 'signed-out', username: null, wins: 0, losses: 0, stars: 0, message: 'Sign in or make an account to play online' });
+      this.stopSocialLoops();
+      this.set({
+        phase: 'signed-out',
+        username: null,
+        wins: 0,
+        losses: 0,
+        stars: 0,
+        message: 'Sign in or make an account to play online',
+        friends: [],
+        invites: [],
+        friendMessage: '',
+      });
       return;
     }
     this.userId = user.id;
@@ -489,11 +550,140 @@ export class OnlineService {
       stars: this.meta.stars,
       message: 'Ready to queue',
     });
+    this.startSocialLoops();
+  }
+
+  // ------------------------------------------------------------- friends
+
+  /** Presence heartbeat plus the friends/invitations poll. */
+  private startSocialLoops(): void {
+    this.stopSocialLoops();
+    void this.beat();
+    void this.refreshFriends();
+    this.heartbeatTimer = window.setInterval(() => void this.beat(), heartbeatMs);
+    this.friendsTimer = window.setInterval(() => void this.refreshFriends(), friendsPollMs);
+  }
+
+  private stopSocialLoops(): void {
+    window.clearInterval(this.heartbeatTimer);
+    window.clearInterval(this.friendsTimer);
+    this.heartbeatTimer = 0;
+    this.friendsTimer = 0;
+  }
+
+  private async beat(): Promise<void> {
+    if (!this.client || !this.userId) return;
+    // A failed heartbeat only makes this player look offline to friends for a
+    // while; it is not worth interrupting them over.
+    await this.client.schema('api').rpc('heartbeat');
+  }
+
+  /** One round trip for the whole panel: friends, invitations, and any match. */
+  private async refreshFriends(): Promise<void> {
+    if (!this.client || !this.userId) return;
+    // Nothing social to poll for while a battle is on screen.
+    if (this.activeMatchId) return;
+    const { data, error } = await this.client.schema('api').rpc('friends_state');
+    if (error || !this.userId) return;
+    const state = (data ?? {}) as {
+      friends?: unknown;
+      invites?: unknown;
+      match?: unknown;
+    };
+    this.set({
+      friends: parseFriends(state.friends),
+      invites: parseInvites(state.invites),
+    });
+    const ticket = parseTicket(state.match);
+    // The other side accepted; drop into the match they just created.
+    if (ticket && !this.openedMatches.has(ticket.matchId)) await this.openMatch(state.match);
+  }
+
+  async addFriend(username: string): Promise<void> {
+    await this.friendAction(
+      () => this.client!.schema('api').rpc('add_friend', { p_username: username.trim() }),
+      'Enter a commander name first',
+      username.trim().length > 0,
+    );
+  }
+
+  async respondFriend(userId: string, accept: boolean): Promise<void> {
+    await this.friendAction(() =>
+      this.client!.schema('api').rpc('respond_friend', { p_user: userId, p_accept: accept }),
+    );
+  }
+
+  async removeFriend(userId: string): Promise<void> {
+    await this.friendAction(() => this.client!.schema('api').rpc('remove_friend', { p_user: userId }));
+  }
+
+  async sendInvite(userId: string, durationSeconds: number): Promise<void> {
+    await this.friendAction(() =>
+      this.client!.schema('api').rpc('send_invite', {
+        p_to: userId,
+        p_duration_seconds: onlineDuration(durationSeconds),
+      }),
+    );
+  }
+
+  async cancelInvite(inviteId: string): Promise<void> {
+    await this.friendAction(() => this.client!.schema('api').rpc('cancel_invite', { p_invite: inviteId }));
+  }
+
+  /** Accepting starts the match for both players; declining just clears it. */
+  async respondInvite(inviteId: string, accept: boolean): Promise<void> {
+    if (!this.client || !this.userId) return;
+    const { data, error } = await this.client
+      .schema('api')
+      .rpc('respond_invite', { p_invite: inviteId, p_accept: accept });
+    if (error) {
+      this.set({ friendMessage: this.onlineError(error.message) });
+      return;
+    }
+    const result = (data ?? {}) as { message?: string; match?: unknown };
+    this.set({ friendMessage: typeof result.message === 'string' ? result.message : '' });
+    if (accept && result.match) {
+      window.clearInterval(this.queueTimer);
+      this.queueTimer = 0;
+      await this.openMatch(result.match);
+      return;
+    }
+    await this.refreshFriends();
+  }
+
+  /** Shared plumbing: run an RPC, surface its message, refresh the panel. */
+  private async friendAction(
+    call: () => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+    guardMessage = '',
+    allowed = true,
+  ): Promise<void> {
+    if (!this.client || !this.userId) return;
+    if (!allowed) {
+      this.set({ friendMessage: guardMessage });
+      return;
+    }
+    const { data, error } = await call();
+    if (error) {
+      this.set({ friendMessage: this.onlineError(error.message) });
+      return;
+    }
+    const result = (data ?? {}) as { message?: string };
+    this.set({ friendMessage: typeof result.message === 'string' ? result.message : '' });
+    await this.refreshFriends();
   }
 
   private set(patch: Partial<OnlineState>): void {
+    // The friends poll fires every few seconds and usually finds nothing new.
+    // Rebuilding the menu on every one of those would fight the player's typing.
+    const changed = Object.entries(patch).some(([key, value]) => {
+      const current = (this.state as unknown as Record<string, unknown>)[key];
+      if (Array.isArray(value) || Array.isArray(current)) {
+        return JSON.stringify(current) !== JSON.stringify(value);
+      }
+      return current !== value;
+    });
     Object.assign(this.state, patch);
-    this.callbacks.changed();
+    if (changed) this.callbacks.changed();
   }
 
   private fail(message: string): void {
@@ -506,6 +696,49 @@ export class OnlineService {
     }
     return message;
   }
+}
+
+/** Rows come back from an RPC as loose JSON; take only what has the right shape. */
+function parseFriends(value: unknown): FriendSummary[] {
+  if (!Array.isArray(value)) return [];
+  const out: FriendSummary[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== 'object') continue;
+    const friend = row as Record<string, unknown>;
+    const status = friend.status;
+    if (typeof friend.userId !== 'string' || typeof friend.username !== 'string') continue;
+    if (status !== 'accepted' && status !== 'incoming' && status !== 'outgoing') continue;
+    out.push({
+      userId: friend.userId,
+      username: friend.username,
+      online: friend.online === true,
+      status,
+    });
+  }
+  return out;
+}
+
+function parseInvites(value: unknown): MatchInvite[] {
+  if (!Array.isArray(value)) return [];
+  const out: MatchInvite[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== 'object') continue;
+    const invite = row as Record<string, unknown>;
+    const direction = invite.direction;
+    if (typeof invite.id !== 'string' || typeof invite.userId !== 'string') continue;
+    if (typeof invite.username !== 'string' || typeof invite.expiresAt !== 'string') continue;
+    if (direction !== 'incoming' && direction !== 'outgoing') continue;
+    if (typeof invite.durationSeconds !== 'number') continue;
+    out.push({
+      id: invite.id,
+      userId: invite.userId,
+      username: invite.username,
+      durationSeconds: invite.durationSeconds,
+      direction,
+      expiresAt: invite.expiresAt,
+    });
+  }
+  return out;
 }
 
 function parseTicket(value: unknown): OnlineMatchTicket | null {

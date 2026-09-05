@@ -198,9 +198,22 @@ export const INTERCEPTOR_SPEED_FACTOR = 1.4;
 export const INTERCEPTOR_MIN_SPEED = 480;
 /**
  * A battery will not take a shot it can only complete below this height — the
- * reason missiles aimed at thinly covered parts of a city get through.
+ * reason missiles aimed at thinly covered parts of a city get through. It is
+ * the ceiling for a warhead dropping vertically; a shallow arc coming in on a
+ * long, flat approach is judged against a proportionally lower one, or a
+ * short-range battery could not defend the plot it is standing on.
  */
 export const MIN_INTERCEPT_ALTITUDE = 95;
+
+/** Share of that ceiling that applies however flat the approach is. */
+export const FLAT_APPROACH_ALTITUDE_SHARE = 0.35;
+
+/**
+ * A shot must resolve at least this long before the warhead lands. Measured in
+ * seconds rather than as a share of the flight, so it means the same thing for
+ * a Scud loafing across the map and for a Bunker Buster covering it in 0.75s.
+ */
+export const MIN_INTERCEPT_LEAD = 0.04;
 
 /**
  * Every repeat purchase of an in-match upgrade multiplies its price by this,

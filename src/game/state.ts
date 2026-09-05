@@ -558,10 +558,24 @@ export function ownSide(match: Match, side: Side): SideState {
   return side === 'player' ? match.player : match.enemy;
 }
 
-/** x of the launch pad for a side — just outside its own city. */
+/**
+ * x of the launch pad for a side — behind its own city, on the far side from
+ * the enemy, so rockets rise over their own skyline instead of in front of it.
+ */
 export function launchPadX(side: Side): number {
-  return side === 'player' ? WORLD.cityRight.x0 - 90 : WORLD.cityLeft.x1 + 90;
+  return side === 'player' ? WORLD.cityRight.x1 + PAD_SETBACK : WORLD.cityLeft.x0 - PAD_SETBACK;
 }
+
+/**
+ * Where the pad used to sit, in front of the city. Flight times are still
+ * measured from here so moving the launchers back did not slow every rocket
+ * down — the longer route is flown in the same number of seconds.
+ */
+export function launchPadReferenceX(side: Side): number {
+  return side === 'player' ? WORLD.cityRight.x0 - PAD_SETBACK : WORLD.cityLeft.x1 + PAD_SETBACK;
+}
+
+const PAD_SETBACK = 90;
 
 export function difficultyProfile(match: Match) {
   return BOTS[match.difficulty];

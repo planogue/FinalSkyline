@@ -1,16 +1,27 @@
 import {
   AA,
   BUILDINGS,
+  FLAT_APPROACH_ALTITUDE_SHARE,
   INTERCEPTOR_MIN_SPEED,
   INTERCEPTOR_SPEED_FACTOR,
   MIN_INTERCEPT_ALTITUDE,
+  MIN_INTERCEPT_LEAD,
   MISSILES,
   WORLD,
   canIntercept,
 } from '../core/config';
 import type { Building, Interceptor, MetaSave, Missile, Particle, SideState } from '../core/types';
 import { audio, type ExplosionSurface } from '../core/audio';
-import { aaRadius, aaReload, hash01, launchPadX, nextUid, removeBattery, type Match } from './state';
+import {
+  aaRadius,
+  aaReload,
+  hash01,
+  launchPadReferenceX,
+  launchPadX,
+  nextUid,
+  removeBattery,
+  type Match,
+} from './state';
 
 // ---------------------------------------------------------------------------
 // Ballistics
@@ -103,7 +114,15 @@ export function spawnMissile(state: SideState, tier: number, targetX: number): M
   const x0 = launchPadX(state.side);
   const y0 = WORLD.groundY - 14;
   const ty = WORLD.groundY;
-  const flightTime = missileRoute({ x0, y0, tx: targetX, ty, tier }).length / def.speed;
+  const route = missileRoute({ x0, y0, tx: targetX, ty, tier });
+  // Timing is measured from the old pad in front of the city, so moving the
+  // launchers round the back did not add seconds to every shot. The rocket
+  // therefore covers its longer route at a correspondingly higher real speed —
+  // which is the speed the interceptors have to be told about, not the
+  // catalogue figure, or nothing would ever be shot down again.
+  const reference = missileRoute({ x0: launchPadReferenceX(state.side), y0, tx: targetX, ty, tier });
+  const flightTime = reference.length / def.speed;
+  const speed = route.length / flightTime;
   const m: Missile = {
     uid: nextUid(),
     side: state.side,
@@ -111,14 +130,14 @@ export function spawnMissile(state: SideState, tier: number, targetX: number): M
     x: x0,
     y: y0,
     vx: 0,
-    vy: -def.speed,
+    vy: -speed,
     x0,
     y0,
     tx: targetX,
     ty,
     t: 0,
     flightTime,
-    speed: def.speed,
+    speed,
     damage: def.damage,
     blast: def.blast,
     dead: false,
@@ -165,12 +184,32 @@ function solveIntercept(m: Missile, bx: number, by: number, speed: number): { t:
     if (gap(mid) > 0) lo = mid;
     else hi = mid;
   }
+  if (remaining - hi < MIN_INTERCEPT_LEAD) return null; // lands with the warhead
   const future = m.t + hi / m.flightTime;
-  if (future >= 0.94) return null;
   const p = missileAt(m, future);
   // Too low to be worth a shot — the warhead is already on top of the city.
-  if (p.y > WORLD.groundY - MIN_INTERCEPT_ALTITUDE) return null;
+  if (p.y > WORLD.groundY - interceptCeiling(m, future)) return null;
   return { t: hi, x: p.x, y: p.y };
+}
+
+/**
+ * How low a battery is willing to engage, given how the warhead is coming in.
+ * A vertical diver has to be caught well above the roofs, because below that it
+ * is already over the city. A lofted arc spends its last seconds on a long flat
+ * approach out over open ground, where a low shot is perfectly sensible — and
+ * holding it to the diver's ceiling would put the only legal firing window
+ * further away than a short-range battery can reach.
+ */
+function interceptCeiling(m: Missile, t: number): number {
+  const step = 0.01;
+  const before = missileAt(m, Math.max(0, t - step));
+  const after = missileAt(m, Math.min(1, t + step));
+  const dx = Math.abs(after.x - before.x);
+  const dy = Math.abs(after.y - before.y);
+  const span = Math.hypot(dx, dy);
+  // 0 = flying flat, 1 = straight down.
+  const steepness = span > 0 ? dy / span : 1;
+  return MIN_INTERCEPT_ALTITUDE * (FLAT_APPROACH_ALTITUDE_SHARE + (1 - FLAT_APPROACH_ALTITUDE_SHARE) * steepness);
 }
 
 function spawnInterceptor(

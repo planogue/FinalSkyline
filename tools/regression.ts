@@ -4,7 +4,7 @@ import { defaultMeta } from '../src/core/storage';
 import { updateBot } from '../src/game/bot';
 import { missileAt, spawnMissile, updateDefences, updateInterceptors, updateMissiles } from '../src/game/combat';
 import { stepMatch } from '../src/game/engine';
-import { AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, missileReload, pinTarget, commitQueue } from '../src/game/state';
+import { AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
 
 const meta = defaultMeta();
 
@@ -60,6 +60,32 @@ for (let i = 0; i < 49; i++) stepMatch(launch, 0.1, meta);
 assert.equal(launch.player.stats.launched, 1);
 stepMatch(launch, 0.11, meta);
 assert.equal(launch.player.stats.launched, 2, 'Second Bunker Buster launches after five seconds');
+
+// Launchers sit behind their own city, so a rocket rises over its own skyline
+// before crossing. Moving them there must not have added a second to any shot:
+// flight times are still measured from the old pad in front of the city, and
+// the longer route is flown at a correspondingly higher real speed.
+assert(launchPadX('player') > WORLD.cityRight.x1, 'The player launches from behind its city');
+assert(launchPadX('enemy') < WORLD.cityLeft.x0, 'The enemy launches from behind its city');
+assert.equal(
+  launchPadX('player') + launchPadX('enemy'),
+  WORLD.width,
+  'The pads mirror across the centre line, which online play depends on',
+);
+for (const tier of MISSILES.map((m) => m.tier)) {
+  const timing = createMatch('easy', 300);
+  const shot = spawnMissile(timing.player, tier, 700);
+  const def = MISSILES[tier - 1];
+  const straightLine = Math.abs(700 - launchPadReferenceX('player'));
+  // Same duration as the front-of-city pad would have produced.
+  assert(
+    shot.flightTime > straightLine / def.speed * 0.9 &&
+      shot.flightTime < straightLine / def.speed * 1.8,
+    `Tier ${tier} keeps its old flight time`,
+  );
+  assert(shot.speed > def.speed, `Tier ${tier} flies its longer route faster`);
+  assert(shot.x0 > WORLD.cityRight.x1, `Tier ${tier} starts behind the city`);
+}
 
 // The heavy tiers fly the overhead cruise route: straight up, across the top of
 // the battlefield, then a vertical dive onto the exact pin. Normal frames and

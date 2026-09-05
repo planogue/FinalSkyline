@@ -177,6 +177,13 @@ tools/probe.ts           one instrumented match, sampled every 30 s
 tools/online-sim.ts      mirror/validation check for online commands
 ```
 
+Launchers sit behind their own city, so a rocket climbs over its own skyline before
+crossing. Flight times are still measured from the old pad in front of the city, so
+moving them back did not add a second to any shot — each rocket covers the longer route
+at a correspondingly higher real speed, and that real speed is what the interceptor
+predictor is told about. `npm run probe:intercept` is the check that keeps the two in
+step.
+
 Tuning the game means editing `src/core/config.ts` and re-running `npm run sim`.
 
 ## Online play
@@ -189,6 +196,28 @@ Three ways in, in the order the menu offers them:
    becomes the username, stripped to letters, numbers and underscores.
 3. **Email and password** — folded away behind a disclosure. Creating an account signs
    you straight in; there is no "check your inbox" step to sit through.
+
+### Friends and invitations
+
+Add a commander by their username and, once they accept, you can see when they are
+online and invite them straight into a match — no queue, no waiting for a stranger.
+
+- **Presence** is a heartbeat: the client calls `api.heartbeat()` every 30 seconds and a
+  player counts as online while their last beat is under 75 seconds old.
+- **Invitations stand for 90 seconds.** The panel counts down to the deadline and the
+  server enforces it, so an invitation cannot be accepted late even if a client's clock
+  disagrees. Accepting creates the match and hands the accepting player its ticket; the
+  inviter picks the same ticket up on their next poll, and both drop into the same game.
+- Only friends can be invited, an invitation names the match length the inviter had
+  selected, and two players inviting each other at the same time produces one match
+  rather than two.
+- The panel refreshes on a 4-second poll through a single `api.friends_state()` call,
+  which returns the friend list, both directions of invitation, and any match to join.
+
+None of these tables are readable directly: a player has no select rights on
+`friendships` or `match_invites`, and the profiles policy still hides other accounts.
+Everything goes through security-definer RPCs that return only a username and an
+online flag.
 
 A profile row tied to the Auth user stores the public username, wins, losses, stars, and
 permanent upgrade levels. Queueing matches players who chose the same length — 5, 10 or
@@ -258,6 +287,16 @@ Caveats before you re-tune:
   intel upgrade is bought.
 - `npm run chart:routes` writes `route-chart.svg`, every tier's flight path drawn from
   the live ballistics.
+- `npm run test:db` runs every migration against a throwaway Postgres and exercises the
+  account, matchmaking, friends, presence and invitation RPCs the way two browsers
+  would, including an invitation lapsing and two players inviting each other at once.
+  It needs two packages that are deliberately *not* devDependencies, because
+  `embedded-postgres` downloads a Postgres build and that has no business running on
+  every deploy:
+
+  ```bash
+  npm install --no-save embedded-postgres pg
+  ```
 
 ## Deploying to Vercel
 

@@ -115,6 +115,25 @@ const host: UiHost = {
   async signInAsGuest() {
     await onlineService.signInAsGuest();
   },
+  async addFriend(username: string) {
+    await onlineService.addFriend(username);
+  },
+  async respondFriend(userId: string, accept: boolean) {
+    await onlineService.respondFriend(userId, accept);
+  },
+  async removeFriend(userId: string) {
+    await onlineService.removeFriend(userId);
+  },
+  async sendInvite(userId: string) {
+    // Invitations use whatever match length is selected on the menu.
+    await onlineService.sendInvite(userId, ui.duration);
+  },
+  async cancelInvite(inviteId: string) {
+    await onlineService.cancelInvite(inviteId);
+  },
+  async respondInvite(inviteId: string, accept: boolean) {
+    await onlineService.respondInvite(inviteId, accept);
+  },
   async signOut() {
     await onlineService.signOut();
   },
@@ -545,6 +564,15 @@ const debug = {
     audio.init();
     audio.explosion(tier, surface, pan);
     return { tier, surface };
+  },
+  /**
+   * The live online state, so the friends panel can be dressed with fixture
+   * data and inspected without two signed-in accounts:
+   * `Object.assign(__finalSkyline.online(), { friends: [...] });
+   *  __finalSkyline.refreshOverlay()`
+   */
+  online() {
+    return online;
   },
   missileTable() {
     return MISSILES.map((d) => ({ tier: d.roman, cost: d.cost, speed: d.speed, dmg: d.damage, reload: d.reload }));

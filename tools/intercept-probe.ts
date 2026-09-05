@@ -33,7 +33,9 @@ function trial(tier: number, aaType: number, offset: number): boolean {
   return defender.stats.intercepted === 1;
 }
 
-const offsets = [0, 60, 120, 200, 300, 400];
+// Negative sits the battery behind the impact point, away from the incoming
+// fire; positive sits it out towards the launcher.
+const offsets = [-200, -100, 0, 100, 200, 300, 400];
 const rows: Record<string, string | number>[] = [];
 
 for (const missile of MISSILES) {
