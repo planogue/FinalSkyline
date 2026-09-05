@@ -1,6 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient, type User } from '@supabase/supabase-js';
 import type { MetaSave } from '../core/types';
 import { parseOnlineAction, type OnlineAction } from './actions';
+import { onlineDuration, onlineDurationLabel } from '../core/config';
 
 export type OnlinePhase = 'loading' | 'disabled' | 'signed-out' | 'ready' | 'queueing' | 'matched' | 'error';
 
@@ -122,8 +123,9 @@ export class OnlineService {
       return;
     }
     this.set({ phase: 'loading', message: 'Creating account…' });
+    const address = email.trim();
     const { data, error } = await this.client.auth.signUp({
-      email: email.trim(),
+      email: address,
       password,
       options: { data: { username: cleanName }, emailRedirectTo: window.location.origin },
     });
@@ -131,8 +133,59 @@ export class OnlineService {
       this.set({ phase: 'signed-out', message: error.message });
       return;
     }
-    if (data.session && data.user) await this.handleUser(data.user);
-    else this.set({ phase: 'signed-out', message: 'Account made — check your email to confirm it, then sign in' });
+    if (data.session && data.user) {
+      await this.handleUser(data.user);
+      return;
+    }
+    // No session came back, which means the project still has email
+    // confirmation switched on. Sign in with the credentials just used rather
+    // than sending the player away to their inbox.
+    const signedIn = await this.client.auth.signInWithPassword({ email: address, password });
+    if (signedIn.data.user && !signedIn.error) {
+      await this.handleUser(signedIn.data.user);
+      return;
+    }
+    this.set({
+      phase: 'signed-out',
+      message:
+        'Account made, but this project still requires email confirmation. ' +
+        'Turn "Confirm email" off in Supabase Auth, or use Google or Play as guest.',
+    });
+  }
+
+  /** Google OAuth. Returns to the same page, where init() picks up the session. */
+  async signInWithGoogle(): Promise<void> {
+    if (!this.client) return;
+    this.set({ phase: 'loading', message: 'Opening Google sign-in…' });
+    const { error } = await this.client.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) {
+      this.set({
+        phase: 'signed-out',
+        message: /provider.*not enabled/i.test(error.message)
+          ? 'Google sign-in is not enabled on this project yet'
+          : error.message,
+      });
+    }
+  }
+
+  /** A throwaway account: play online with no credentials at all. */
+  async signInAsGuest(): Promise<void> {
+    if (!this.client) return;
+    this.set({ phase: 'loading', message: 'Setting up a guest commander…' });
+    const { data, error } = await this.client.auth.signInAnonymously();
+    if (error) {
+      this.set({
+        phase: 'signed-out',
+        message: /anonymous.*disabled|not enabled/i.test(error.message)
+          ? 'Guest play is not enabled on this project yet'
+          : error.message,
+      });
+      return;
+    }
+    await this.handleUser(data.user);
   }
 
   async signIn(email: string, password: string): Promise<void> {
@@ -161,8 +214,8 @@ export class OnlineService {
 
   async joinQueue(durationSeconds: number): Promise<void> {
     if (!this.client || !this.userId || this.state.phase === 'queueing') return;
-    const duration = [300, 600, 900].includes(durationSeconds) ? durationSeconds : 600;
-    this.set({ phase: 'queueing', message: `Searching for a ${duration / 60}-minute match…` });
+    const duration = onlineDuration(durationSeconds);
+    this.set({ phase: 'queueing', message: `Searching for an ${onlineDurationLabel(duration)} match…` });
     const { data, error } = await this.client.schema('api').rpc('join_queue', {
       p_duration_seconds: duration,
     });
@@ -467,7 +520,8 @@ function parseTicket(value: unknown): OnlineMatchTicket | null {
   ) return null;
   return {
     matchId: ticket.matchId,
-    durationSeconds: ticket.durationSeconds,
+    // The server stores an unlimited match as 0; the simulation wants Infinity.
+    durationSeconds: ticket.durationSeconds === 0 ? Infinity : ticket.durationSeconds,
     opponentId: ticket.opponentId,
     opponentUsername: ticket.opponentUsername,
     seed: typeof ticket.seed === 'number' ? ticket.seed : Number(ticket.seed) || 0,

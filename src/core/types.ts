@@ -143,6 +143,8 @@ export interface SideState {
   launchCooldown: number[];
   /** Shots of each tier already used, for per-match limits. */
   shotsUsed: number[];
+  /** Bought the intel upgrade that reveals the opponent's camouflaged radars. */
+  radarIntel: boolean;
   /** Pending launches waiting for their tier's launcher to free up. */
   pending: QueuedShot[];
   /** Targets pinned but not yet committed with Fight. */

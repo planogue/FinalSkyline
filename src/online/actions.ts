@@ -7,6 +7,7 @@ import {
   buyBattery,
   buyBuilding,
   buyMissileUpgrade,
+  buyRadarIntel,
   clearQueue,
   commitQueue,
   pinTarget,
@@ -21,6 +22,7 @@ export type OnlineAction =
   | { type: 'aa-radius'; batteryType: number }
   | { type: 'aa-reload'; batteryType: number }
   | { type: 'missile-upgrade'; tier: number }
+  | { type: 'radar-intel' }
   | { type: 'pin-target'; tier: number; x: number }
   | { type: 'unpin-target'; tier?: number }
   | { type: 'clear-targets' }
@@ -64,6 +66,7 @@ export function parseOnlineAction(value: unknown): OnlineAction | null {
       return action.tier === undefined || intBetween(action.tier, 1, 6)
         ? { type: action.type, ...(action.tier === undefined ? {} : { tier: action.tier }) }
         : null;
+    case 'radar-intel':
     case 'clear-targets':
     case 'commit-targets':
       return { type: action.type };
@@ -91,6 +94,8 @@ export function applyRemoteAction(match: Match, meta: MetaSave, action: OnlineAc
       return buyAaReload(enemy, action.batteryType, meta);
     case 'missile-upgrade':
       return buyMissileUpgrade(enemy, action.tier, meta) !== false;
+    case 'radar-intel':
+      return buyRadarIntel(enemy);
     case 'pin-target':
       return pinTarget(enemy, action.tier, WORLD.width - action.x) !== null;
     case 'unpin-target':

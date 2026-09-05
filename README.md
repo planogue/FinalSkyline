@@ -181,10 +181,19 @@ Tuning the game means editing `src/core/config.ts` and re-running `npm run sim`.
 
 ## Online play
 
-Accounts use Supabase email/password authentication. A profile row tied to the Auth user
-stores the public username, wins, losses, stars, and permanent upgrade levels. Queueing
-matches players who choose the same 5-, 10-, or 15-minute duration. During a match each
-browser simulates its own right-side city while authenticated realtime commands are
+Three ways in, in the order the menu offers them:
+
+1. **Play as guest** — a Supabase anonymous account. No email, no password, nothing to
+   remember. The profile is named `guest_<id>` and progression sticks to that browser.
+2. **Sign in with Google** — OAuth, returning to the same page. The Google display name
+   becomes the username, stripped to letters, numbers and underscores.
+3. **Email and password** — folded away behind a disclosure. Creating an account signs
+   you straight in; there is no "check your inbox" step to sit through.
+
+A profile row tied to the Auth user stores the public username, wins, losses, stars, and
+permanent upgrade levels. Queueing matches players who chose the same length — 5, 10 or
+15 minutes, or unlimited, which the database stores as a duration of 0. During a match
+each browser simulates its own right-side city while authenticated realtime commands are
 mirrored onto the opponent's left side. Online games use an equal base loadout; Star Shop
 bonuses remain part of solo progression.
 
@@ -197,15 +206,29 @@ npx supabase db reset
 npm run dev
 ```
 
+### Project settings the migrations cannot set for you
+
+Both live in the Supabase dashboard, under **Authentication → Sign In / Providers**:
+
+- **Anonymous sign-ins: on** — otherwise *Play as guest* reports that guest play is not
+  enabled.
+- **Google: on**, with the OAuth client ID and secret from Google Cloud, and the app's
+  origin added to Supabase's redirect allow-list.
+- **Confirm email: off** is the smoothest path for the email form. With it left on,
+  sign-up falls back to signing in with the credentials just entered, which works unless
+  the project also blocks unconfirmed sign-ins — in which case the card says so.
+
 Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in Vercel for Production,
 Preview, and Development. These are browser-safe project identifiers; never expose the
 secret or service-role key. Without them the full bot game still works and the online
 card clearly reports that its backend is not connected.
 
-The migration in `supabase/migrations/` creates the account profile, queue, matches,
-results, RLS policies, RPC functions, and Realtime publication. It also exposes the
+The migrations in `supabase/migrations/` create the account profile, queue, matches,
+results, RLS policies, RPC functions, and Realtime publication. They also expose the
 locked-down `api` schema to PostgREST; only the explicitly granted matchmaking/result
-functions are callable by authenticated players.
+functions are callable by authenticated players. The latest migration adds the unlimited
+queue bucket and teaches the profile trigger to name Google and guest accounts, which
+arrive without a username of their own.
 
 ## Balance snapshot
 
@@ -227,6 +250,14 @@ Caveats before you re-tune:
 - `npm run probe` prints one instrumented hard match sampled every 30 s — cash, income,
   batteries, magazines, shots fired and intercepted for both sides. That is far more use
   for finding *why* a side collapses than the win-rate table.
+- `npm run probe:intercept` tabulates, for every missile tier, how far from the impact
+  point a battery can sit and still stop it. Run it after any speed change: the top tiers
+  cross the map in well under a second, and it fails the build if nothing can answer the
+  heaviest warhead at all.
+- `npm run probe:render` asserts headlessly that enemy radars stay unpainted until the
+  intel upgrade is bought.
+- `npm run chart:routes` writes `route-chart.svg`, every tier's flight path drawn from
+  the live ballistics.
 
 ## Deploying to Vercel
 

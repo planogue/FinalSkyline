@@ -6,6 +6,10 @@ import {
   MATCH,
   META,
   MISSILES,
+  RADAR_INTEL_COST,
+  canIntercept,
+  onlineDuration,
+  onlineDurationLabel,
   type Difficulty,
 } from '../core/config';
 import type { MetaSave, PanelId } from '../core/types';
@@ -21,6 +25,7 @@ import {
   buyAaReload,
   buyAmmo,
   buyMissileUpgrade,
+  buyRadarIntel,
   cityValue,
   clearQueue,
   countBuildings,
@@ -52,6 +57,9 @@ import {
   missileIcon,
 } from './icons';
 
+/** Row shortcut keys on the in-match Upgrades screen, in display order. */
+const UPGRADE_ROW_KEYS = ['r', 'd', 'm', 'e'];
+
 export interface UiState {
   panel: PanelId;
   selectedTier: number;
@@ -79,6 +87,8 @@ export interface UiHost {
   cancelOnlineQueue(): Promise<void>;
   signUp(username: string, email: string, password: string): Promise<void>;
   signIn(email: string, password: string): Promise<void>;
+  signInWithGoogle(): Promise<void>;
+  signInAsGuest(): Promise<void>;
   signOut(): Promise<void>;
   sendOnlineAction(action: OnlineAction): void;
   saveProgress(): void;
@@ -112,6 +122,13 @@ const clock = (s: number): string => {
   const t = Math.max(0, Math.floor(s));
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
+
+/** Plain-English summary of which systems can engage a missile tier. */
+function interceptedBy(tier: number): string {
+  const systems = AA.filter((def) => canIntercept(def, tier));
+  if (!systems.length) return 'cannot be intercepted';
+  return `stopped by ${systems.map((def) => `${def.name} ${def.roman}`).join(' or ')}`;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -195,7 +212,7 @@ export class GameUI {
     // Enter/Space retain native activation for a focused button or summary.
     if ((key === 'enter' || key === ' ') && document.activeElement?.matches('button, summary')) return false;
     if (this.overlayKind === 'upgrades') {
-      const row = ['r', 'd', 'm'].indexOf(key);
+      const row = UPGRADE_ROW_KEYS.indexOf(key);
       if (row >= 0) {
         this.upgradeRow = row;
         this.highlightUpgradeRow();
@@ -334,10 +351,17 @@ export class GameUI {
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 1500);
   }
 
-  /** Rebuilds the current overlay after account or queue state changes. */
+  /**
+   * Rebuilds the current overlay after account or queue state changes.
+   * The flag matters: clearing `overlayKind` alone would be a no-op whenever
+   * the overlay is *already* meant to be gone, leaving the menu painted over a
+   * live match — which is what happened the instant matchmaking succeeded.
+   */
   refreshOverlay(): void {
-    this.overlayKind = 'none';
+    this.overlayDirty = true;
   }
+
+  private overlayDirty = false;
 
   // ------------------------------------------------------------ per frame
 
@@ -780,7 +804,7 @@ export class GameUI {
         art: missileIcon(def.tier),
         tier: def.roman,
         cost: `$${def.cost}`,
-        title: `${def.name} — ${def.damage} dmg, ${def.speed} m/s${def.unstoppable ? ', cannot be intercepted' : `, stopped only by anti-air ${def.roman}`}`,
+        title: `${def.name} — ${def.damage} dmg, ${def.speed} m/s, ${interceptedBy(def.tier)}`,
         onClick: () => {
           const match = this.host.match;
           if (!match) return;
@@ -832,7 +856,8 @@ export class GameUI {
                 ? 'upgrades'
                 : 'none';
 
-    if (want !== this.overlayKind) {
+    if (want !== this.overlayKind || this.overlayDirty) {
+      this.overlayDirty = false;
       this.overlayKind = want;
       this.overlay.className = `overlay${want === 'upgrades' ? ' upgrades' : ''}`;
       this.overlay.innerHTML = '';
@@ -902,6 +927,8 @@ export class GameUI {
         ui.duration = len.value;
         lenRow.querySelectorAll('button').forEach((n) => ((n as HTMLElement).style.borderColor = ''));
         b.style.borderColor = 'var(--gold)';
+        // The online card names the length it will queue for, so redraw it.
+        this.refreshOverlay();
       });
       lenRow.appendChild(b);
     }
@@ -949,7 +976,7 @@ export class GameUI {
     help.innerHTML = `<summary style="cursor:pointer;font-weight:800;color:#dfe6ee;padding:6px 0">How it works</summary>
       <ul style="padding-left:18px;margin:6px 0">
         <li><b>Buildings</b> pay income every 2 seconds. Pick a type, then tap a free plot on your land to place it. Each type has a cap that rises by one every ${MATCH.limitStepSeconds / 60} minutes; a levelled building frees its slot so you can rebuild.</li>
-        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each. Pick a system, then tap your own land to site it wherever you like. Batteries can be bombed, and replaced once they are.</li>
+        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it wherever you like. A radar takes no room of its own, so it can share a plot with a launcher. Batteries can be bombed, and replaced once they are.</li>
         <li><b>ABM rounds</b> are the ammunition. An empty battery cannot intercept anything.</li>
         <li><b>Upgrades</b> (in-match, paid in cash) widen defence radius, cut anti-air reload, and unlock heavier missiles.</li>
         <li><b>Attacking</b>: open ICBM, pick a tier, tap their city to pin targets, then hit Fight. Each tier launches on its own reload timer.</li>
@@ -973,6 +1000,28 @@ export class GameUI {
     }
 
     if (!state.username) {
+      const busy = state.phase === 'loading';
+      const submit = (action: () => Promise<void>) => {
+        audio.init();
+        audio.click();
+        void action();
+      };
+
+      // No credentials needed to play: guest first, Google second, and the
+      // email form tucked away for anyone who wants progress on another device.
+      const quick = el('div', 'online-actions');
+      const guest = el('button', 'btn primary', 'Play as guest');
+      guest.disabled = busy;
+      guest.addEventListener('click', () => submit(() => this.host.signInAsGuest()));
+      const google = el('button', 'btn', 'Sign in with Google');
+      google.disabled = busy;
+      google.addEventListener('click', () => submit(() => this.host.signInWithGoogle()));
+      quick.append(guest, google);
+      card.appendChild(quick);
+
+      const emailBlock = el('details', 'auth-email');
+      emailBlock.innerHTML = '<summary>Use an email and password instead</summary>';
+
       const fields = el('div', 'auth-fields');
       const username = el('input', 'auth-input');
       username.placeholder = 'Username (for sign up)';
@@ -987,26 +1036,21 @@ export class GameUI {
       password.placeholder = 'Password';
       password.autocomplete = 'current-password';
       fields.append(username, email, password);
-      card.appendChild(fields);
+      emailBlock.appendChild(fields);
 
       const row = el('div', 'online-actions');
-      const signUp = el('button', 'btn primary', 'Create account');
+      const signUp = el('button', 'btn ghost', 'Create account');
       const signIn = el('button', 'btn ghost', 'Sign in');
-      const busy = state.phase === 'loading';
       signUp.disabled = busy;
       signIn.disabled = busy;
-      const submit = (action: () => Promise<void>) => {
-        audio.init();
-        audio.click();
-        void action();
-      };
       signUp.addEventListener('click', () => submit(() => this.host.signUp(username.value, email.value, password.value)));
       signIn.addEventListener('click', () => submit(() => this.host.signIn(email.value, password.value)));
       password.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') submit(() => this.host.signIn(email.value, password.value));
       });
       row.append(signUp, signIn);
-      card.appendChild(row);
+      emailBlock.appendChild(row);
+      card.appendChild(emailBlock);
     } else {
       const profile = el('div', 'online-profile');
       const name = el('strong');
@@ -1025,8 +1069,8 @@ export class GameUI {
         });
         row.appendChild(cancel);
       } else {
-        const duration = [300, 600, 900].includes(this.host.ui.duration) ? this.host.ui.duration : 600;
-        const queue = el('button', 'btn primary', `Queue · ${duration / 60} min`);
+        const duration = onlineDuration(this.host.ui.duration);
+        const queue = el('button', 'btn primary', `Queue · ${onlineDurationLabel(duration)}`);
         queue.disabled = state.phase === 'loading';
         queue.addEventListener('click', () => {
           audio.init();
@@ -1283,7 +1327,7 @@ export class GameUI {
 
     let rowIndex = 0;
     const mkRow = (title: string, cards: HTMLElement[]) => {
-      const rowKey = ['R', 'D', 'M'][rowIndex];
+      const rowKey = UPGRADE_ROW_KEYS[rowIndex].toUpperCase();
       const heading = el('h2', undefined, title);
       heading.dataset.hint = rowKey;
       wrap.appendChild(heading);
@@ -1412,6 +1456,40 @@ export class GameUI {
       });
     });
 
+    const intel = el('button', 'card split');
+    intel.title = 'Their radar dishes are camouflaged. Buy this once and they are drawn like every other battery.';
+    const intelArt = el('div', 'art', aaIcon(0));
+    const intelMeta = el('div', 'meta');
+    const intelCost = el('div', 'cost');
+    const intelDelta = el('div', 'delta', 'Once');
+    const intelTier = el('div', 'tier', '?');
+    const intelRing = el('div', 'ring');
+    intelRing.style.background = AA[0].color;
+    intel.append(intelArt, intelMeta, intelTier, intelCost, intelDelta, intelRing);
+    intel.addEventListener('click', () => {
+      if (match.player.radarIntel) {
+        audio.deny();
+        this.toast('Enemy radars are already visible');
+        return;
+      }
+      if (buyRadarIntel(match.player)) {
+        this.host.sendOnlineAction({ type: 'radar-intel' });
+        audio.buy();
+        this.toast('Enemy radars revealed');
+      } else {
+        audio.deny();
+        this.toast('Not enough cash');
+      }
+    });
+    this.upgradeUpdates.push(() => {
+      const owned = match.player.radarIntel;
+      intelMeta.textContent = owned ? 'Revealed' : 'Hidden';
+      intelCost.textContent = owned ? 'OWNED' : `$${RADAR_INTEL_COST}`;
+      intelDelta.textContent = owned ? 'Active' : 'Once';
+      intel.classList.toggle('dim', owned || match.player.money < RADAR_INTEL_COST);
+    });
+    mkRow('Reveal enemy radar positions', [intel]);
+
     const legend = el('div', 'legend');
     legend.innerHTML = AA.map(
       (d) =>
@@ -1421,9 +1499,9 @@ export class GameUI {
     const note = el(
       'p',
       'sub',
-      'Anti-air tier ' +
-        'Ⅰ–Ⅴ' +
-        ' only stops the matching missile tier. Prices rise with every purchase, and everything here resets at the end of the match — permanent upgrades live in the Star Shop.',
+      'Anti-air tier Ⅰ–Ⅴ only stops the matching missile tier, except THAAD, which is the ' +
+        'one system fast enough to also catch a Bunker Buster. Prices rise with every purchase, ' +
+        'and everything here resets at the end of the match — permanent upgrades live in the Star Shop.',
     );
     wrap.appendChild(note);
 

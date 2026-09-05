@@ -12,7 +12,11 @@
     "test:game": "esbuild tools/regression.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-regression.mjs --log-level=warning && node node_modules/.final-skyline-regression.mjs",
     "sim": "npx esbuild tools/sim.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-sim.mjs --log-level=warning && node node_modules/.final-skyline-sim.mjs",
     "sim:online": "npx esbuild tools/online-sim.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-online-sim.mjs --log-level=warning && node node_modules/.final-skyline-online-sim.mjs",
-    "probe": "npx esbuild tools/probe.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-probe.mjs --log-level=warning && node node_modules/.final-skyline-probe.mjs"
+    "probe": "npx esbuild tools/probe.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-probe.mjs --log-level=warning && node node_modules/.final-skyline-probe.mjs",
+    "probe:intercept": "npx esbuild tools/intercept-probe.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-intercept.mjs --log-level=warning && node node_modules/.final-skyline-intercept.mjs",
+    "test:online": "npx esbuild tools/online-service-regression.ts --bundle --platform=node --format=esm --define:import.meta.env={} --outfile=node_modules/.final-skyline-online-service.mjs --log-level=warning && node node_modules/.final-skyline-online-service.mjs",
+    "probe:render": "npx esbuild tools/render-probe.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-render.mjs --log-level=warning && node node_modules/.final-skyline-render.mjs",
+    "chart:routes": "npx esbuild tools/route-chart.ts --bundle --platform=node --format=esm --outfile=node_modules/.final-skyline-routes.mjs --log-level=warning && node node_modules/.final-skyline-routes.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

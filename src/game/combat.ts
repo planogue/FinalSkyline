@@ -6,9 +6,10 @@ import {
   MIN_INTERCEPT_ALTITUDE,
   MISSILES,
   WORLD,
+  canIntercept,
 } from '../core/config';
 import type { Building, Interceptor, MetaSave, Missile, Particle, SideState } from '../core/types';
-import { audio } from '../core/audio';
+import { audio, type ExplosionSurface } from '../core/audio';
 import { aaRadius, aaReload, hash01, launchPadX, nextUid, removeBattery, type Match } from './state';
 
 // ---------------------------------------------------------------------------
@@ -18,9 +19,27 @@ import { aaRadius, aaReload, hash01, launchPadX, nextUid, removeBattery, type Ma
 // Even the curved turns stay above the tallest possible skyline.
 const CRUISE_Y = Math.min(100, WORLD.groundY - Math.max(...BUILDINGS.map((b) => b.h)) - 140);
 
-/** Vertical launch, two rounded turns with a high crossing, then a vertical dive. */
-function missileRoute(m: Pick<Missile, 'x0' | 'y0' | 'tx' | 'ty'>) {
+/** Peak height of the single-parabola arc used by the light tiers. */
+function arcHeight(dist: number): number {
+  return Math.min(430, 110 + dist * 0.15);
+}
+
+type RouteSpec =
+  | { kind: 'arc'; height: number; length: number }
+  | { kind: 'cruise'; direction: number; bend: number; rise: number; turn: number; crossing: number; length: number };
+
+/**
+ * Tiers I–III fly the original lofted parabola; the heavy tiers launch
+ * vertically, cross high and dive straight down onto the marked plot.
+ */
+function missileRoute(m: Pick<Missile, 'x0' | 'y0' | 'tx' | 'ty' | 'tier'>): RouteSpec {
   const distance = Math.abs(m.tx - m.x0);
+  if (MISSILES[m.tier - 1].route === 'arc') {
+    const height = arcHeight(distance);
+    // Arc-tier progress is parameterised by ground distance, so `length` is
+    // only used to derive the flight time; the shape comes from the sine term.
+    return { kind: 'arc', height, length: distance + 1.9 * height };
+  }
   const direction = Math.sign(m.tx - m.x0);
   const bend = Math.min(100, distance / 2);
   const rise = m.y0 - CRUISE_Y - bend;
@@ -28,12 +47,17 @@ function missileRoute(m: Pick<Missile, 'x0' | 'y0' | 'tx' | 'ty'>) {
   const crossing = distance - bend * 2;
   const fall = m.ty - CRUISE_Y - bend;
   const length = rise + turn * 2 + crossing + fall;
-  return { direction, bend, rise, turn, crossing, length };
+  return { kind: 'cruise', direction, bend, rise, turn, crossing, length };
 }
 
-function missileOnRoute(m: Missile, t: number, route: ReturnType<typeof missileRoute>): { x: number; y: number } {
+function missileOnRoute(m: Missile, t: number, route: RouteSpec): { x: number; y: number } {
   if (t <= 0) return { x: m.x0, y: m.y0 };
   if (t >= 1) return { x: m.tx, y: m.ty };
+  if (route.kind === 'arc') {
+    const x = m.x0 + (m.tx - m.x0) * t;
+    const base = m.y0 + (m.ty - m.y0) * t;
+    return { x, y: base - route.height * Math.sin(Math.PI * t) };
+  }
   const { direction, bend, rise, turn, crossing, length } = route;
   let distance = t * length;
   if (distance <= rise) return { x: m.x0, y: m.y0 - distance };
@@ -59,6 +83,17 @@ function missileOnRoute(m: Missile, t: number, route: ReturnType<typeof missileR
   return { x: m.tx, y: CRUISE_Y + bend + distance };
 }
 
+/**
+ * Fractions of the flight where the path changes direction. A long frame must
+ * never sweep a straight shortcut across one of them into a building the
+ * missile was going to fly over. The smooth parabola has none.
+ */
+function routeCheckpoints(route: RouteSpec): number[] {
+  if (route.kind === 'arc') return [];
+  const { rise, turn, crossing, length } = route;
+  return [rise, rise + turn, rise + turn + crossing, rise + turn * 2 + crossing].map((d) => d / length);
+}
+
 export function missileAt(m: Missile, t: number): { x: number; y: number } {
   return missileOnRoute(m, t, missileRoute(m));
 }
@@ -68,7 +103,7 @@ export function spawnMissile(state: SideState, tier: number, targetX: number): M
   const x0 = launchPadX(state.side);
   const y0 = WORLD.groundY - 14;
   const ty = WORLD.groundY;
-  const flightTime = missileRoute({ x0, y0, tx: targetX, ty }).length / def.speed;
+  const flightTime = missileRoute({ x0, y0, tx: targetX, ty, tier }).length / def.speed;
   const m: Missile = {
     uid: nextUid(),
     side: state.side,
@@ -99,30 +134,43 @@ export function spawnMissile(state: SideState, tier: number, targetX: number): M
 // Interception
 // ---------------------------------------------------------------------------
 
+/** How fast this battery's rounds fly at a given target. */
+function interceptorSpeed(type: number, target: Missile): number {
+  const factor = AA[type].speedFactor ?? INTERCEPTOR_SPEED_FACTOR;
+  return Math.max(INTERCEPTOR_MIN_SPEED, target.speed * factor);
+}
+
 /**
  * Solves for the moment an interceptor launched now would meet `m`.
  * Returns null when the missile lands before the interceptor can reach it.
+ *
+ * The gap between how far the interceptor still has to fly and how far it can
+ * fly in that time starts positive and shrinks strictly — every interceptor is
+ * faster than its target — so a bracketed search lands on the single crossing
+ * exactly. Iterating `tau = distance / speed` instead only settles when the
+ * target is slow; against the top tiers it oscillates and finds nothing.
  */
 function solveIntercept(m: Missile, bx: number, by: number, speed: number): { t: number; x: number; y: number } | null {
-  let tau = 0.35;
-  for (let i = 0; i < 6; i++) {
-    const future = m.t + tau / m.flightTime;
-    if (future >= 1) return null;
-    const p = missileAt(m, future);
-    const d = Math.hypot(p.x - bx, p.y - by);
-    const next = d / speed;
-    if (Math.abs(next - tau) < 0.01) {
-      tau = next;
-      break;
-    }
-    tau = next;
+  const remaining = (1 - m.t) * m.flightTime;
+  if (remaining <= 0) return null;
+  const gap = (tau: number): number => {
+    const p = missileAt(m, m.t + tau / m.flightTime);
+    return Math.hypot(p.x - bx, p.y - by) - speed * tau;
+  };
+  if (gap(remaining) > 0) return null; // it reaches the ground first
+  let lo = 0;
+  let hi = remaining;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (gap(mid) > 0) lo = mid;
+    else hi = mid;
   }
-  const future = m.t + tau / m.flightTime;
+  const future = m.t + hi / m.flightTime;
   if (future >= 0.94) return null;
   const p = missileAt(m, future);
   // Too low to be worth a shot — the warhead is already on top of the city.
   if (p.y > WORLD.groundY - MIN_INTERCEPT_ALTITUDE) return null;
-  return { t: tau, x: p.x, y: p.y };
+  return { t: hi, x: p.x, y: p.y };
 }
 
 function spawnInterceptor(
@@ -172,10 +220,9 @@ export function updateDefences(match: Match, dt: number, meta: MetaSave): void {
       let best: { m: Missile; sol: { t: number; x: number; y: number } } | null = null;
       for (const m of match.missiles) {
         if (m.dead || m.side === state.side) continue;
-        if (m.tier !== def.interceptsTier) continue;
-        if (MISSILES[m.tier - 1].unstoppable) continue;
+        if (!canIntercept(def, m.tier)) continue;
         if (m.targetedBy > 0) continue;
-        const speed = Math.max(INTERCEPTOR_MIN_SPEED, m.speed * INTERCEPTOR_SPEED_FACTOR);
+        const speed = interceptorSpeed(b.type, m);
         const sol = solveIntercept(m, b.x, by, speed);
         if (!sol) continue;
         if (Math.hypot(sol.x - b.x, sol.y - by) > radius) continue;
@@ -185,7 +232,7 @@ export function updateDefences(match: Match, dt: number, meta: MetaSave): void {
       if (best) {
         b.aim = Math.atan2(best.sol.y - by, best.sol.x - b.x);
         if (b.cooldown <= 0 && state.ammo[b.type] > 0) {
-          const speed = Math.max(INTERCEPTOR_MIN_SPEED, best.m.speed * INTERCEPTOR_SPEED_FACTOR);
+          const speed = interceptorSpeed(b.type, best.m);
           spawnInterceptor(match, state, b.type, b.x, by, best.m, speed, best.sol.x, best.sol.y);
           b.cooldown = aaReload(state, b.type, meta);
           b.recoil = 1;
@@ -326,10 +373,13 @@ export function updateMissiles(match: Match, dt: number): void {
     // shortcut from launch/crossing into a building before the marked target.
     // Rounded-turn chords are safe here because the turns stay above all roofs.
     const defender = m.side === 'player' ? match.enemy : match.player;
-    const { rise, turn, crossing, length } = route;
-    const boundaries = [rise, rise + turn, rise + turn + crossing, rise + turn * 2 + crossing];
-    const checkpoints = boundaries.map((distance) => distance / length)
-      .filter((t) => t > previousT && t < Math.min(1, m.t));
+    const checkpoints = routeCheckpoints(route).filter((t) => t > previousT && t < Math.min(1, m.t));
+    // The top tiers cross the map in under a second, so a single frame can span
+    // a whole city block. Sub-sample so they cannot tunnel past a tower.
+    const span = Math.min(1, m.t) - previousT;
+    const substeps = Math.min(12, Math.ceil((span * route.length) / 40));
+    for (let i = 1; i < substeps; i++) checkpoints.push(previousT + (span * i) / substeps);
+    checkpoints.sort((a, b) => a - b);
     checkpoints.push(Math.min(1, m.t));
     let from = prev;
     let struck: ReturnType<typeof sweepBuildings> = null;
@@ -383,8 +433,14 @@ function impact(match: Match, m: Missile, ix: number, iy: number, direct: Buildi
   const attacker = m.side === 'player' ? match.player : match.enemy;
   attacker.stats.hits++;
 
-  const power = 0.35 + m.tier * 0.3;
-  audio.explosion(power, panFor(match, ix));
+  // What it went off against decides how the blast sounds: a tower shears and
+  // rains glass, a launcher tears and cooks off its rounds, the street thuds.
+  const surface: ExplosionSurface = direct
+    ? 'building'
+    : defender.batteries.some((bat) => Math.abs(bat.x - ix) <= AA_HALF_WIDTH + m.blast * 0.5)
+      ? 'antiair'
+      : 'ground';
+  audio.explosion(m.tier, surface, panFor(match, ix));
   explosionBurst(match, ix, iy, m.blast, m.tier);
   match.shake = Math.max(match.shake, 5 + m.tier * 3.5);
 

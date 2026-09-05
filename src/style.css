@@ -698,6 +698,34 @@ button:focus-visible, summary:focus-visible, input:focus-visible {
   color: #fff;
 }
 
+/* Email sign-in is the fallback path now, so it collapses out of the way. */
+.auth-email {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+}
+
+.auth-email > summary {
+  cursor: pointer;
+  text-align: center;
+  color: #8b98a8;
+  font-size: 12px;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.auth-email > summary::-webkit-details-marker {
+  display: none;
+}
+
+.auth-email > summary:hover {
+  color: #c8d4e2;
+}
+
+.auth-email .auth-fields {
+  margin-top: 8px;
+}
+
 .online-message {
   margin: 9px 0 0;
   text-align: center;

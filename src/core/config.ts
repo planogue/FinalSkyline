@@ -37,6 +37,22 @@ export const MATCH = {
   unlimitedCycleSeconds: 480,
 };
 
+/**
+ * Match lengths the online matchmaker keeps a queue for. 0 is the unlimited
+ * bucket — the database stores it as 0 because it has no finite length.
+ */
+export const ONLINE_DURATIONS = [300, 600, 900, 0];
+
+/** Snaps a menu selection onto the queue bucket it will actually search. */
+export function onlineDuration(durationSeconds: number): number {
+  if (!isFinite(durationSeconds)) return 0;
+  return ONLINE_DURATIONS.includes(durationSeconds) ? durationSeconds : 600;
+}
+
+export function onlineDurationLabel(duration: number): string {
+  return duration === 0 ? 'Unlimited' : `${duration / 60} min`;
+}
+
 // ---------------------------------------------------------------------------
 // Buildings
 // ---------------------------------------------------------------------------
@@ -94,8 +110,13 @@ export interface MissileDef {
   /** In-match purchase that shaves reload; cost grows each time. */
   reloadUpgradeCost: number;
   reloadStep: number;
-  /** Cannot be intercepted by any anti-air. */
+  /** No same-tier battery exists; only a system listing this tier in `alsoIntercepts` can touch it. */
   unstoppable?: boolean;
+  /**
+   * Flight path. 'arc' is the original single parabola; 'cruise' is the
+   * vertical launch, high crossing and vertical dive.
+   */
+  route: 'arc' | 'cruise';
   /** Hard cap of shots per match (0 = unlimited). */
   perMatchLimit: number;
   color: string;
@@ -103,12 +124,12 @@ export interface MissileDef {
 }
 
 export const MISSILES: MissileDef[] = [
-  { tier: 1, name: 'Scud',      roman: 'I',   cost: 1.5, reload: 5.0, speed: 255, damage: 15,   blast: 16, unlockCost: 0,   reloadUpgradeCost: 5,   reloadStep: 0.1, perMatchLimit: 0, color: '#c8d2dc', length: 15 },
-  { tier: 2, name: 'Tochka',    roman: 'II',  cost: 4,   reload: 5.0, speed: 340, damage: 45,   blast: 22, unlockCost: 10,  reloadUpgradeCost: 10,  reloadStep: 0.1, perMatchLimit: 0, color: '#a9c6a2', length: 18 },
-  { tier: 3, name: 'Iskander',  roman: 'III', cost: 8,   reload: 5.0, speed: 460, damage: 120,  blast: 30, unlockCost: 30,  reloadUpgradeCost: 22,  reloadStep: 0.1, perMatchLimit: 0, color: '#8fa8bf', length: 22 },
-  { tier: 4, name: 'Topol',     roman: 'IV',  cost: 15,  reload: 5.0, speed: 560, damage: 300,  blast: 40, unlockCost: 80,  reloadUpgradeCost: 40,  reloadStep: 0.1, perMatchLimit: 0, color: '#d8d8d8', length: 26 },
-  { tier: 5, name: 'Satan II',  roman: 'V',   cost: 30,  reload: 5.0, speed: 900, damage: 700,  blast: 55, unlockCost: 120, reloadUpgradeCost: 65,  reloadStep: 0.1, perMatchLimit: 0, color: '#3f4750', length: 30 },
-  { tier: 6, name: 'Bunker Buster', roman: 'VI', cost: 80, reload: 5.0, speed: 540, damage: 1500, blast: 95, unlockCost: 600, reloadUpgradeCost: 300, reloadStep: 0.1, unstoppable: true, perMatchLimit: 0, color: '#6d6a4f', length: 34 },
+  { tier: 1, name: 'Scud',      roman: 'I',   cost: 1.5, reload: 5.0, speed: 255, damage: 15,   blast: 16, unlockCost: 0,   reloadUpgradeCost: 5,   reloadStep: 0.1, perMatchLimit: 0, color: '#c8d2dc', length: 15, route: 'arc' },
+  { tier: 2, name: 'Tochka',    roman: 'II',  cost: 4,   reload: 5.0, speed: 340, damage: 45,   blast: 22, unlockCost: 10,  reloadUpgradeCost: 10,  reloadStep: 0.1, perMatchLimit: 0, color: '#a9c6a2', length: 18, route: 'arc' },
+  { tier: 3, name: 'Iskander',  roman: 'III', cost: 8,   reload: 5.0, speed: 460, damage: 120,  blast: 30, unlockCost: 30,  reloadUpgradeCost: 22,  reloadStep: 0.1, perMatchLimit: 0, color: '#8fa8bf', length: 22, route: 'arc' },
+  { tier: 4, name: 'Topol',     roman: 'IV',  cost: 15,  reload: 5.0, speed: 560, damage: 300,  blast: 40, unlockCost: 80,  reloadUpgradeCost: 40,  reloadStep: 0.1, perMatchLimit: 0, color: '#d8d8d8', length: 26, route: 'cruise' },
+  { tier: 5, name: 'Satan II',  roman: 'V',   cost: 30,  reload: 5.0, speed: 1500, damage: 700, blast: 55, unlockCost: 120, reloadUpgradeCost: 65,  reloadStep: 0.1, perMatchLimit: 0, color: '#3f4750', length: 30, route: 'cruise' },
+  { tier: 6, name: 'Bunker Buster', roman: 'VI', cost: 80, reload: 5.0, speed: 3600, damage: 1500, blast: 95, unlockCost: 600, reloadUpgradeCost: 300, reloadStep: 0.1, unstoppable: true, perMatchLimit: 0, color: '#6d6a4f', length: 34, route: 'cruise' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -139,6 +160,14 @@ export interface AaDef {
   hp: number;
   /** Unique ring / tracer colour (requirement 6). */
   color: string;
+  /**
+   * Extra missile tiers this system can engage on top of `interceptsTier`.
+   * Only the heaviest battery gets one, so the top attack tier stays rare but
+   * not literally unanswerable.
+   */
+  alsoIntercepts?: number[];
+  /** Interceptor speed as a multiple of the target's; defaults to INTERCEPTOR_SPEED_FACTOR. */
+  speedFactor?: number;
 }
 
 export const AA: AaDef[] = [
@@ -147,10 +176,22 @@ export const AA: AaDef[] = [
   { id: 2, name: 'Hawk',    roman: 'II',  interceptsTier: 2, costs: [25, 40], baseRadius: 205, baseReload: 5.0, radiusUpgradeCost: 12, radiusStep: 5,  reloadUpgradeCost: 6,  reloadStep: 0.05, ammoCost: 4,  ammoCap: 40, hp: 330, color: '#59e07a' },
   { id: 3, name: 'Patriot', roman: 'III', interceptsTier: 3, costs: [35, 55], baseRadius: 250, baseReload: 5.0, radiusUpgradeCost: 17, radiusStep: 5,  reloadUpgradeCost: 8,  reloadStep: 0.05, ammoCost: 7,  ammoCap: 40, hp: 410, color: '#ff8b3d' },
   { id: 4, name: 'S-400',   roman: 'IV',  interceptsTier: 4, costs: [50, 80], baseRadius: 310, baseReload: 5.0, radiusUpgradeCost: 22, radiusStep: 5,  reloadUpgradeCost: 14, reloadStep: 0.05, ammoCost: 13, ammoCap: 40, hp: 520, color: '#c46bff' },
-  { id: 5, name: 'THAAD',   roman: 'V',   interceptsTier: 5, costs: [70, 110],baseRadius: 390, baseReload: 5.0, radiusUpgradeCost: 26, radiusStep: 5,  reloadUpgradeCost: 18, reloadStep: 0.05, ammoCost: 26, ammoCap: 40, hp: 650, color: '#ff5470' },
+  { id: 5, name: 'THAAD',   roman: 'V',   interceptsTier: 5, costs: [70, 110],baseRadius: 390, baseReload: 5.0, radiusUpgradeCost: 26, radiusStep: 5,  reloadUpgradeCost: 18, reloadStep: 0.05, ammoCost: 26, ammoCap: 40, hp: 650, color: '#ff5470', alsoIntercepts: [6], speedFactor: 2.6 },
 ];
 
 export const AA_MAX_PER_TYPE = 2;
+
+/** Whether an anti-air system is allowed to engage a given missile tier. */
+export function canIntercept(def: AaDef, tier: number): boolean {
+  if (def.interceptsTier === 0) return false;
+  return def.interceptsTier === tier || (def.alsoIntercepts?.includes(tier) ?? false);
+}
+
+/**
+ * Enemy radar dishes are camouflaged until this in-match upgrade is bought.
+ * A one-off purchase, unlike the repeatable radius and reload upgrades.
+ */
+export const RADAR_INTEL_COST = 1500;
 
 /** Interceptor flight speed as a multiple of the incoming missile's speed. */
 export const INTERCEPTOR_SPEED_FACTOR = 1.4;

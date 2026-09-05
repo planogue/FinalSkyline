@@ -15,6 +15,8 @@ export interface SceneOpts {
   meta: MetaSave;
   /** With a radar you see incoming fire early; without it, only at the last second. */
   hasRadar: boolean;
+  /** Bought the intel upgrade, so the opponent's camouflaged radars are drawn. */
+  radarIntel: boolean;
   /** Anti-air type being sited by hand, with the cursor position and validity. */
   deploy: { type: number; x: number | null; valid: boolean; radius: number } | null;
   /** Building being positioned on a snapped city plot. */
@@ -45,7 +47,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, match: Match, cam: Came
   for (const side of [match.enemy, match.player]) {
     const highlight = opts.aiming && side.side === 'enemy';
     drawCity(ctx, cam, side.buildings, night, highlight);
-    for (const b of side.batteries) drawBattery(ctx, cam, b, night);
+    // Their radars are camouflaged until the intel upgrade is bought.
+    const visible = side.batteries.filter(
+      (b) => !(side.side === 'enemy' && isRadar(b.type) && !opts.radarIntel),
+    );
+    for (const { battery, offset } of stackLayout(visible)) {
+      drawBattery(ctx, cam, battery, night, offset);
+    }
   }
 
   drawGround(ctx, cam, night);
@@ -492,9 +500,46 @@ function drawRubble(ctx: CanvasRenderingContext2D, x: number, gy: number, w: num
 // Batteries
 // ---------------------------------------------------------------------------
 
-function drawBattery(ctx: CanvasRenderingContext2D, cam: Camera, b: AaBattery, night: number): void {
+function isRadar(type: number): boolean {
+  return AA[type].interceptsTier === 0;
+}
+
+/** World units a stacked installation fans out by, so nothing is fully hidden. */
+const STACK_SPREAD = 15;
+
+/**
+ * A radar takes no room of its own, so several systems can share one plot.
+ * Fan a shared plot out a little and paint the dishes last: a radar drawn
+ * under a launcher box would otherwise disappear completely.
+ */
+function stackLayout(batteries: AaBattery[]): { battery: AaBattery; offset: number }[] {
+  const perPlot = new Map<number, number>();
+  for (const b of batteries) {
+    const key = Math.round(b.x);
+    perPlot.set(key, (perPlot.get(key) ?? 0) + 1);
+  }
+  const placed = new Map<number, number>();
+  const ordered = [...batteries].sort(
+    (a, b) => Number(isRadar(a.type)) - Number(isRadar(b.type)),
+  );
+  return ordered.map((battery) => {
+    const key = Math.round(battery.x);
+    const total = perPlot.get(key) ?? 1;
+    const index = placed.get(key) ?? 0;
+    placed.set(key, index + 1);
+    return { battery, offset: total > 1 ? (index - (total - 1) / 2) * STACK_SPREAD : 0 };
+  });
+}
+
+function drawBattery(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  b: AaBattery,
+  night: number,
+  offsetX = 0,
+): void {
   const s = cam.scale;
-  const x = cam.toScreenX(b.x);
+  const x = cam.toScreenX(b.x) + offsetX * s;
   if (x < -60 || x > cam.viewW + 60) return;
   const gy = cam.groundScreenY();
   const def = AA[b.type];

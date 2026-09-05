@@ -7,17 +7,31 @@ import { stepMatch } from '../src/game/engine';
 import { AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, missileReload, pinTarget, commitQueue } from '../src/game/state';
 
 const meta = defaultMeta();
+
+// Launchers need clearance from each other; type 1 is the lightest one.
 const spacing = createMatch('easy', 300);
 spacing.player.money = 1000;
-assert(buyBattery(spacing.player, 0, 2600));
+assert(buyBattery(spacing.player, 1, 2600));
 for (const x of [2600, 2634, 2600 + AA_MIN_SPACING - 0.01, NaN, Infinity]) {
-  assert.equal(canDeployAt(spacing.player, x), false, `Reject overlapping/invalid site ${x}`);
-  assert.equal(buyBattery(spacing.player, 0, x), false);
+  assert.equal(canDeployAt(spacing.player, x, 1), false, `Reject overlapping/invalid site ${x}`);
+  assert.equal(buyBattery(spacing.player, 1, x), false);
 }
 assert.equal(spacing.player.money, 1000, 'Rejected placements must not charge cash');
-assert(buyBattery(spacing.player, 0, 2600 + AA_MIN_SPACING));
-assert.equal(spacing.player.money, 970);
-assert.equal(buyBattery(spacing.player, 1, 2600), false, 'Spacing applies across system types');
+assert(buyBattery(spacing.player, 1, 2600 + AA_MIN_SPACING));
+assert.equal(spacing.player.money, 982);
+assert.equal(buyBattery(spacing.player, 2, 2600), false, 'Spacing applies across launcher types');
+
+// Radars have no launch rail, so they stack freely both ways.
+const radars = createMatch('easy', 300);
+radars.player.money = 1000;
+assert(buyBattery(radars.player, 0, 2600));
+assert(canDeployAt(radars.player, 2600, 0), 'A radar may share a plot with a radar');
+assert(buyBattery(radars.player, 0, 2600), 'A second radar sites on the same spot');
+assert(canDeployAt(radars.player, 2600, 3), 'A launcher may be sited over a radar');
+assert(buyBattery(radars.player, 3, 2600));
+assert.equal(canDeployAt(radars.player, 2600, 4), false, 'The launcher still blocks other launchers');
+assert.equal(canDeployAt(radars.player, NaN, 0), false, 'Radars still need a real position');
+assert.equal(canDeployAt(radars.player, WORLD.cityLeft.x0, 0), false, 'Radars still stay on own land');
 
 const reload = createMatch('easy', 300);
 reload.player.money = 100000;
@@ -47,10 +61,16 @@ assert.equal(launch.player.stats.launched, 1);
 stepMatch(launch, 0.11, meta);
 assert.equal(launch.player.stats.launched, 2, 'Second Bunker Buster launches after five seconds');
 
-// Aim beyond a tall skyline from both cities. Normal frames and one full-flight
-// frame must reach the marked x, including a mark near the edge of a roof.
+// The heavy tiers fly the overhead cruise route: straight up, across the top of
+// the battlefield, then a vertical dive onto the exact pin. Normal frames and
+// one full-flight frame must both reach the mark, including a pin near the edge
+// of a roof, and neither may clip a tower on the way in.
+const CRUISE_TIERS = MISSILES.filter((m) => m.route === 'cruise').map((m) => m.tier);
+const ARC_TIERS = MISSILES.filter((m) => m.route === 'arc').map((m) => m.tier);
+assert(CRUISE_TIERS.length > 0 && ARC_TIERS.length > 0, 'Both flight paths are in use');
+
 for (const attackingSide of ['player', 'enemy'] as const) {
-  for (const tier of MISSILES.map((missile) => missile.tier)) {
+  for (const tier of CRUISE_TIERS) {
     for (const aim of ['roof', 'street'] as const) {
       for (const frameMode of ['normal', 'full-flight'] as const) {
         const match = createMatch('easy', 300);
@@ -64,8 +84,8 @@ for (const attackingSide of ['player', 'enemy'] as const) {
         const missile = spawnMissile(attacker, tier, targetX);
         match.missiles.push(missile);
         const early = missileAt(missile, 0.03);
-        assert.equal(early.x, missile.x0, 'Missiles launch straight up');
-        assert(early.y < missile.y0 - 40, 'Missiles climb immediately');
+        assert.equal(early.x, missile.x0, 'Cruise missiles launch straight up');
+        assert(early.y < missile.y0 - 40, 'Cruise missiles climb immediately');
         assert(missileAt(missile, 0.5).y <= 120, 'Crossing stays near the top of the battlefield');
         const late = missileAt(missile, 0.94);
         assert.equal(late.x, targetX, 'Terminal descent is vertically above the exact pin');
@@ -98,6 +118,66 @@ for (const attackingSide of ['player', 'enemy'] as const) {
       }
     }
   }
+}
+
+// The light tiers fly the original lofted parabola. It comes down along a
+// shallow line rather than a vertical dive, so it reaches an unobstructed pin
+// exactly and detonates on the first thing standing in its path otherwise.
+for (const attackingSide of ['player', 'enemy'] as const) {
+  for (const tier of ARC_TIERS) {
+    for (const aim of ['roof', 'street'] as const) {
+      for (const frameMode of ['normal', 'full-flight'] as const) {
+        const match = createMatch('easy', 300);
+        const attacker = match[attackingSide];
+        const defender = attackingSide === 'player' ? match.enemy : match.player;
+        const mirrorX = (x: number) => attackingSide === 'player' ? x : WORLD.width - x;
+        defender.money = 10000;
+        // Nothing between the launcher and the pin: the near edge of the city.
+        assert(buyBuilding(match, defender, 8, mirrorX(1200)));
+        const [tower] = defender.buildings;
+        const targetX = aim === 'roof' ? tower.x : mirrorX(1290);
+        const missile = spawnMissile(attacker, tier, targetX);
+        match.missiles.push(missile);
+        assert(missileAt(missile, 0.03).y < missile.y0, 'Arc missiles climb immediately');
+        assert(missileAt(missile, 0.5).y < missileAt(missile, 0.03).y, 'The arc keeps rising to its apex');
+        assert(missileAt(missile, 0.97).y > missileAt(missile, 0.5).y, 'The arc descends onto the pin');
+        assert.deepEqual(missileAt(missile, 1), { x: targetX, y: WORLD.groundY });
+
+        const dt = frameMode === 'normal' ? 1 / 30 : missile.flightTime * 1.1;
+        for (let elapsed = 0; !missile.dead && elapsed < missile.flightTime + dt; elapsed += dt) {
+          updateMissiles(match, dt);
+        }
+        assert(missile.dead, `${attackingSide} tier ${tier} must complete ${frameMode} flight`);
+        assert.equal(attacker.stats.hits, 1, 'Exactly one impact per missile');
+        if (aim === 'roof') {
+          assert(tower.hp < tower.maxHp, 'An unobstructed arc still flattens what it was aimed at');
+        } else {
+          assert.equal(missile.x, targetX, 'A clear street pin keeps the exact marked x');
+          assert.equal(missile.y, WORLD.groundY, 'A clear street pin lands on the ground');
+        }
+      }
+    }
+  }
+}
+
+// The arc clears a distant skyline but comes down along a shallow line, so a
+// tower standing just in front of the pin takes the hit instead. That trade-off
+// is what separates the light tiers from the overhead heavy ones.
+{
+  const match = createMatch('easy', 300);
+  const defender = match.enemy;
+  defender.money = 10000;
+  assert(buyBuilding(match, defender, 8, 405));
+  assert(buyBuilding(match, defender, 8, 315));
+  const [screen, deep] = defender.buildings;
+  const missile = spawnMissile(match.player, ARC_TIERS[0], deep.x);
+  match.missiles.push(missile);
+  for (let elapsed = 0; !missile.dead && elapsed < missile.flightTime + 1; elapsed += 1 / 60) {
+    updateMissiles(match, 1 / 60);
+  }
+  assert(missile.dead, 'The screened arc shot still resolves');
+  assert(screen.hp < screen.maxHp, 'The intervening tower takes an arc-tier hit');
+  assert.equal(deep.hp, deep.maxHp, 'The deep target is shielded from arc tiers');
 }
 
 // The interceptor predictor must follow the same overhead route and vertical dive.

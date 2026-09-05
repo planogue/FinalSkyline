@@ -109,6 +109,12 @@ const host: UiHost = {
   async signIn(email: string, password: string) {
     await onlineService.signIn(email, password);
   },
+  async signInWithGoogle() {
+    await onlineService.signInWithGoogle();
+  },
+  async signInAsGuest() {
+    await onlineService.signInAsGuest();
+  },
   async signOut() {
     await onlineService.signOut();
   },
@@ -305,7 +311,7 @@ function handleWorldAction(worldX: number): void {
       }
     } else {
       const type = placement.type;
-      if (!canDeployAt(match.player, worldX)) {
+      if (!canDeployAt(match.player, worldX, type)) {
         audio.deny();
         const zone = deployZone('player');
         gameUI.toast(
@@ -530,8 +536,33 @@ const debug = {
     }
     return m.enemy.buildings.length;
   },
+  /**
+   * Audition a detonation without waiting for the ceasefire — the blast scales
+   * with the tier and changes character with what it went off against.
+   * `__finalSkyline.testExplosion(6, 'building')`
+   */
+  testExplosion(tier = 6, surface: 'building' | 'antiair' | 'ground' = 'ground', pan = 0) {
+    audio.init();
+    audio.explosion(tier, surface, pan);
+    return { tier, surface };
+  },
   missileTable() {
     return MISSILES.map((d) => ({ tier: d.roman, cost: d.cost, speed: d.speed, dmg: d.damage, reload: d.reload }));
+  },
+  /**
+   * The rebuild request the online service fires on every state change.
+   * Calling it while a match runs used to leave the main menu painted over the
+   * battlefield, so it is worth being able to reproduce from the console.
+   */
+  refreshOverlay() {
+    gameUI.refreshOverlay();
+    return true;
+  },
+  /** What the overlay is currently showing, if anything. */
+  overlayState() {
+    const node = uiRoot.querySelector('.overlay') as HTMLElement | null;
+    if (!node) return null;
+    return { display: node.style.display, children: node.children.length, screen: host.screen };
   },
 };
 (window as unknown as { __finalSkyline: typeof debug }).__finalSkyline = debug;
@@ -580,12 +611,13 @@ function frame(now: number): void {
     aimX: ui.panel === 'icbm' ? ui.aimX : null,
     meta: host.matchMeta(),
     hasRadar: match ? hasRadar(match.player) : true,
+    radarIntel: match ? match.player.radarIntel : true,
     deploy:
       match && ui.placing?.kind === 'battery'
         ? {
             type: ui.placing.type,
             x: ui.placeX,
-            valid: ui.placeX !== null && canDeployAt(match.player, ui.placeX),
+            valid: ui.placeX !== null && canDeployAt(match.player, ui.placeX, ui.placing.type),
             radius: aaRadius(match.player, ui.placing.type, host.matchMeta()),
           }
         : null,

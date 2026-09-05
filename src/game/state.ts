@@ -7,6 +7,7 @@ import {
   MATCH,
   META,
   MISSILES,
+  RADAR_INTEL_COST,
   UPGRADE_COST_CAP_MULT,
   UPGRADE_COST_GROWTH,
   WORLD,
@@ -167,6 +168,7 @@ function makeSide(side: Side, name: string): SideState {
     missileReloadPrice: MISSILES.map((m) => m.reloadUpgradeCost),
     launchCooldown: MISSILES.map(() => 0),
     shotsUsed: MISSILES.map(() => 0),
+    radarIntel: false,
     pending: [],
     queued: [],
     wipeoutTimer: 0,
@@ -267,6 +269,19 @@ export function hasRadar(state: SideState): boolean {
   return state.aaOwned[0] > 0;
 }
 
+/**
+ * Enemy radar dishes are camouflaged until this is bought. It is a one-off,
+ * unlike the repeatable radius and reload upgrades, so it has no price ramp.
+ */
+export function buyRadarIntel(state: SideState): boolean {
+  if (state.radarIntel) return false;
+  if (state.money < RADAR_INTEL_COST) return false;
+  state.money -= RADAR_INTEL_COST;
+  state.stats.spent += RADAR_INTEL_COST;
+  state.radarIntel = true;
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Purchases — all return true when the money actually changed hands
 // ---------------------------------------------------------------------------
@@ -317,10 +332,20 @@ export function deployZone(side: Side): { x0: number; x1: number } {
 
 const AA_DEPLOY_MARGIN = 150;
 
-export function canDeployAt(state: SideState, x: number): boolean {
+/**
+ * A radar has no launch rail to keep clear, so it shares a plot with whatever
+ * is already there: you can site one over a launcher, and a launcher over one.
+ * Launchers still need room from each other.
+ */
+export function canDeployAt(state: SideState, x: number, type?: number): boolean {
   const zone = deployZone(state.side);
   if (!Number.isFinite(x) || x < zone.x0 || x > zone.x1) return false;
-  return state.batteries.every((b) => Math.abs(b.x - x) >= AA_MIN_SPACING);
+  if (type !== undefined && isRadar(type)) return true;
+  return state.batteries.every((b) => isRadar(b.type) || Math.abs(b.x - x) >= AA_MIN_SPACING);
+}
+
+function isRadar(type: number): boolean {
+  return AA[type].interceptsTier === 0;
 }
 
 // Rendered systems are scaled 1.4x; leave clearance for the chassis and turret.
@@ -330,9 +355,9 @@ export const AA_MIN_SPACING = 56;
 export function buyBattery(state: SideState, type: number, x?: number): boolean {
   const cost = aaCost(state, type);
   if (!isFinite(cost) || state.money < cost) return false;
-  const at = x === undefined ? randomDeploySpot(state) : x;
+  const at = x === undefined ? randomDeploySpot(state, type) : x;
   if (at === null) return false;
-  if (!canDeployAt(state, at)) return false;
+  if (!canDeployAt(state, at, type)) return false;
   state.money -= cost;
   state.stats.spent += cost;
   state.aaOwned[type]++;
@@ -367,7 +392,7 @@ export function bestDeploySpot(state: SideState, type: number, radius: number): 
   const steps = 48;
   for (let i = 0; i <= steps; i++) {
     const x = zone.x0 + ((zone.x1 - zone.x0) * i) / steps;
-    if (!canDeployAt(state, x)) continue;
+    if (!canDeployAt(state, x, type)) continue;
     let score = 0;
     for (const b of alive) {
       const d = Math.abs(b.x - x);
@@ -383,14 +408,14 @@ export function bestDeploySpot(state: SideState, type: number, radius: number): 
       best = x;
     }
   }
-  return best ?? randomDeploySpot(state);
+  return best ?? randomDeploySpot(state, type);
 }
 
-function randomDeploySpot(state: SideState): number | null {
+function randomDeploySpot(state: SideState, type: number): number | null {
   const zone = deployZone(state.side);
   for (let i = 0; i < 60; i++) {
     const x = zone.x0 + Math.random() * (zone.x1 - zone.x0);
-    if (canDeployAt(state, x)) return x;
+    if (canDeployAt(state, x, type)) return x;
   }
   return null;
 }
