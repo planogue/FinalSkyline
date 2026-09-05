@@ -186,26 +186,8 @@ export class OnlineService {
       phase: 'signed-out',
       message:
         'Account made, but this project still requires email confirmation. ' +
-        'Turn "Confirm email" off in Supabase Auth, or use Google or Play as guest.',
+        'Turn "Confirm email" off in Supabase Auth, or play as a guest.',
     });
-  }
-
-  /** Google OAuth. Returns to the same page, where init() picks up the session. */
-  async signInWithGoogle(): Promise<void> {
-    if (!this.client) return;
-    this.set({ phase: 'loading', message: 'Opening Google sign-in…' });
-    const { error } = await this.client.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) {
-      this.set({
-        phase: 'signed-out',
-        message: /provider.*not enabled/i.test(error.message)
-          ? 'Google sign-in is not enabled on this project yet'
-          : error.message,
-      });
-    }
   }
 
   /** A throwaway account: play online with no credentials at all. */

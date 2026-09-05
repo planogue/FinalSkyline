@@ -1,8 +1,8 @@
 -- Two changes to online play:
 --   1. Unlimited matches get their own matchmaking bucket, stored as 0
 --      seconds because they have no finite length.
---   2. Guest (anonymous) and Google accounts sign in without ever supplying a
---      username, so the profile trigger must be able to name them itself.
+--   2. Guest (anonymous) accounts sign in without ever supplying a username, so
+--      the profile trigger must be able to name them itself.
 
 -- --------------------------------------------------------------------------
 -- 1. Duration buckets: 300 / 600 / 900 / 0 (unlimited)
@@ -111,7 +111,7 @@ declare
   suffix text := left(replace(new.id::text, '-', ''), 8);
 begin
   if requested !~ '^[A-Za-z0-9_]{3,20}$' then
-    -- Google hands us a display name; anonymous guests hand us nothing at all.
+    -- Fall back to any display name the provider sent; a guest sends nothing.
     requested := trim(coalesce(
       new.raw_user_meta_data ->> 'name',
       new.raw_user_meta_data ->> 'full_name',

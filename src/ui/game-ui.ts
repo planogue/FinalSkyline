@@ -87,7 +87,6 @@ export interface UiHost {
   cancelOnlineQueue(): Promise<void>;
   signUp(username: string, email: string, password: string): Promise<void>;
   signIn(email: string, password: string): Promise<void>;
-  signInWithGoogle(): Promise<void>;
   signInAsGuest(): Promise<void>;
   signOut(): Promise<void>;
   addFriend(username: string): Promise<void>;
@@ -1028,40 +1027,28 @@ export class GameUI {
         void action();
       };
 
-      // No credentials needed to play: guest first, Google second, and the
-      // email form tucked away for anyone who wants progress on another device.
-      const quick = el('div', 'online-actions');
-      const guest = el('button', 'btn primary', 'Play as guest');
-      guest.disabled = busy;
-      guest.addEventListener('click', () => submit(() => this.host.signInAsGuest()));
-      const google = el('button', 'btn', 'Sign in with Google');
-      google.disabled = busy;
-      google.addEventListener('click', () => submit(() => this.host.signInWithGoogle()));
-      quick.append(guest, google);
-      card.appendChild(quick);
-
-      const emailBlock = el('details', 'auth-email');
-      emailBlock.innerHTML = '<summary>Use an email and password instead</summary>';
-
       const fields = el('div', 'auth-fields');
       const username = el('input', 'auth-input');
       username.placeholder = 'Username (for sign up)';
       username.autocomplete = 'username';
       username.maxLength = 20;
+      username.dataset.focusKey = 'auth-username';
       const email = el('input', 'auth-input');
       email.type = 'email';
       email.placeholder = 'Email';
       email.autocomplete = 'email';
+      email.dataset.focusKey = 'auth-email';
       const password = el('input', 'auth-input');
       password.type = 'password';
       password.placeholder = 'Password';
       password.autocomplete = 'current-password';
+      password.dataset.focusKey = 'auth-password';
       fields.append(username, email, password);
-      emailBlock.appendChild(fields);
+      card.appendChild(fields);
 
       const row = el('div', 'online-actions');
-      const signUp = el('button', 'btn ghost', 'Create account');
-      const signIn = el('button', 'btn ghost', 'Sign in');
+      const signUp = el('button', 'btn primary', 'Create account');
+      const signIn = el('button', 'btn', 'Sign in');
       signUp.disabled = busy;
       signIn.disabled = busy;
       signUp.addEventListener('click', () => submit(() => this.host.signUp(username.value, email.value, password.value)));
@@ -1070,8 +1057,16 @@ export class GameUI {
         if (event.key === 'Enter') submit(() => this.host.signIn(email.value, password.value));
       });
       row.append(signUp, signIn);
-      emailBlock.appendChild(row);
-      card.appendChild(emailBlock);
+      card.appendChild(row);
+
+      // Still one click in for anyone who does not want an account at all.
+      const guestRow = el('div', 'online-actions');
+      const guest = el('button', 'btn ghost', 'Play as guest');
+      guest.disabled = busy;
+      guest.title = 'Play online straight away — progress stays on this device';
+      guest.addEventListener('click', () => submit(() => this.host.signInAsGuest()));
+      guestRow.appendChild(guest);
+      card.appendChild(guestRow);
     } else {
       const profile = el('div', 'online-profile');
       const name = el('strong');

@@ -133,13 +133,13 @@ try {
   const names = await client.query('select user_id, username from public.profiles order by username');
   check('profiles created by trigger', names.rowCount === 2, JSON.stringify(names.rows));
 
-  // Google-style account: a display name with a space, no username claim.
+  // An account whose metadata carries a display name rather than a username.
   const { rows: g } = await client.query(
     `insert into auth.users (raw_user_meta_data) values ('{"name":"Cole Barnes"}'::jsonb) returning id`,
   );
   const cole = g[0].id;
   const coleName = (await client.query('select username from public.profiles where user_id = $1', [cole])).rows[0].username;
-  check('google display name becomes a username', coleName === 'ColeBarnes', coleName);
+  check('a display name is cleaned into a username', coleName === 'ColeBarnes', coleName);
 
   // Guest account.
   const { rows: gu } = await client.query(

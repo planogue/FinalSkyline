@@ -1,5 +1,8 @@
 -- Friends, presence, and direct match invitations.
 --
+-- Safe to run more than once, so a half-applied paste into the SQL editor can
+-- simply be run again.
+--
 -- Everything here is reached through security-definer RPCs in the `api` schema
 -- rather than table grants: a player needs to see a friend's username and
 -- whether they are online, which the profiles policy deliberately does not
@@ -27,7 +30,7 @@ as $$ select interval '75 seconds' $$;
 -- Friendships: one row per pair, held in a canonical order
 -- --------------------------------------------------------------------------
 
-create table public.friendships (
+create table if not exists public.friendships (
   user_low uuid not null references auth.users(id) on delete cascade,
   user_high uuid not null references auth.users(id) on delete cascade,
   requested_by uuid not null references auth.users(id) on delete cascade,
@@ -39,9 +42,10 @@ create table public.friendships (
   constraint friendship_requester_is_member check (requested_by in (user_low, user_high))
 );
 
-create index friendships_user_high_idx on public.friendships (user_high);
-create index friendships_requested_by_idx on public.friendships (requested_by);
+create index if not exists friendships_user_high_idx on public.friendships (user_high);
+create index if not exists friendships_requested_by_idx on public.friendships (requested_by);
 
+drop trigger if exists friendships_set_updated_at on public.friendships;
 create trigger friendships_set_updated_at
 before update on public.friendships
 for each row execute function private.set_updated_at();
@@ -50,7 +54,7 @@ for each row execute function private.set_updated_at();
 -- Direct match invitations
 -- --------------------------------------------------------------------------
 
-create table public.match_invites (
+create table if not exists public.match_invites (
   id uuid primary key default gen_random_uuid(),
   from_user uuid not null references auth.users(id) on delete cascade,
   to_user uuid not null references auth.users(id) on delete cascade,
@@ -63,9 +67,9 @@ create table public.match_invites (
   constraint match_invites_two_players check (from_user <> to_user)
 );
 
-create index match_invites_to_idx on public.match_invites (to_user, status, created_at desc);
-create index match_invites_from_idx on public.match_invites (from_user, status, created_at desc);
-create index match_invites_match_id_idx on public.match_invites (match_id);
+create index if not exists match_invites_to_idx on public.match_invites (to_user, status, created_at desc);
+create index if not exists match_invites_from_idx on public.match_invites (from_user, status, created_at desc);
+create index if not exists match_invites_match_id_idx on public.match_invites (match_id);
 
 -- An invitation stands for 90 seconds and then lapses.
 create or replace function private.invite_window()

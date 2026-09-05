@@ -9,3 +9,4 @@ dist
 .netlify
 work-*.png
 route-chart.svg
+supabase/run-in-supabase.sql

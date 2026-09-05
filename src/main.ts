@@ -109,9 +109,6 @@ const host: UiHost = {
   async signIn(email: string, password: string) {
     await onlineService.signIn(email, password);
   },
-  async signInWithGoogle() {
-    await onlineService.signInWithGoogle();
-  },
   async signInAsGuest() {
     await onlineService.signInAsGuest();
   },
