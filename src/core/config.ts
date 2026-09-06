@@ -32,7 +32,7 @@ export const MATCH = {
   /** Default match length in seconds; overridable from the main menu. */
   durationSeconds: 900, // 15 minutes
   /** With no buildings and no money to rebuild for this long, you lose. */
-  wipeoutGraceSeconds: 6,
+  wipeoutGraceSeconds: 5,
   /** Length of one day/night cycle in an unlimited match. */
   unlimitedCycleSeconds: 480,
   /**
@@ -44,6 +44,22 @@ export const MATCH = {
    * the winner in a match nobody can end.
    */
   opponentSilenceSeconds: 15,
+  /**
+   * The simulation always advances in steps of exactly this length, however
+   * fast the browser is painting. Two players on different machines must tread
+   * the same ground or their copies of the battle drift apart — a warhead one
+   * of them shot down lands on the other.
+   */
+  stepSeconds: 1 / 60,
+  /** Extra steps a frame may run to make up a short stall, beyond its own share. */
+  maxStepsPerFrame: 8,
+  /**
+   * Online only. How often each player broadcasts the true state of their own
+   * city. Whatever the other browser worked out for itself, this is the version
+   * that counts: a player is the only one who can say what is still standing on
+   * their own land.
+   */
+  citySyncSeconds: 2,
 };
 
 /**

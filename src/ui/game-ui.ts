@@ -165,6 +165,7 @@ export class GameUI {
   private timeEl!: HTMLElement;
   private redBar!: HTMLElement;
   private statusbar!: HTMLElement;
+  private wipeoutEl!: HTMLElement;
   private dayIcon!: HTMLElement;
   private ringsBtn!: HTMLButtonElement;
 
@@ -317,6 +318,13 @@ export class GameUI {
     this.statusbar = el('div', 'statusbar');
     this.root.appendChild(this.statusbar);
 
+    // The last seconds before a levelled city is a lost match. Nothing else on
+    // screen is allowed to be this loud.
+    this.wipeoutEl = el('div', 'wipeout');
+    this.wipeoutEl.style.display = 'none';
+    this.wipeoutEl.setAttribute('role', 'status');
+    this.root.appendChild(this.wipeoutEl);
+
     // Dock ----------------------------------------------------------------
     this.dock = el('div', 'dock');
     this.dockScroll = el('div', 'dock-scroll');
@@ -400,9 +408,11 @@ export class GameUI {
       if (this.builtPanel !== ui.panel) this.buildDock();
       for (const u of this.cardUpdates) u();
       this.syncFightBar(match);
+      this.syncWipeout(match);
     } else {
       this.fightBtn.style.display = 'none';
       this.hintEl.style.display = 'none';
+      this.wipeoutEl.style.display = 'none';
     }
 
     this.syncOverlay(inGame ? match : null, meta);
@@ -442,6 +452,34 @@ export class GameUI {
             },
           ).join('')}</svg>`;
   }
+
+  /**
+   * Counts the player out while their city is flat. It only runs once the
+   * ceasefire is over, which is the same condition the engine uses to start the
+   * clock — so the number on screen is the one that will actually end the match.
+   */
+  private syncWipeout(match: Match): void {
+    const timer = match.player.wipeoutTimer;
+    if (timer <= 0 || match.phase !== 'playing') {
+      this.wipeoutEl.style.display = 'none';
+      return;
+    }
+    const left = Math.max(0, Math.ceil(MATCH.wipeoutGraceSeconds - timer));
+    // Losing the match outranks a coaching tip, and they share the same strip.
+    this.hintEl.style.display = 'none';
+    this.wipeoutEl.style.display = '';
+    // Rubble left behind says the city was levelled; no plot ever taken says
+    // this player simply never built one.
+    const label = match.player.buildings.length ? 'CITY LEVELLED — REBUILD NOW' : 'NO CITY — BUILD NOW';
+    this.wipeoutEl.innerHTML =
+      `<div class="wipeout-label">${label}</div><div class="wipeout-count">${left}</div>`;
+    // A flash on each new second, so it reads as a countdown out of the corner
+    // of an eye that is busy elsewhere.
+    this.wipeoutEl.classList.toggle('tick', left !== this.lastWipeoutSecond);
+    this.lastWipeoutSecond = left;
+  }
+
+  private lastWipeoutSecond = -1;
 
   private syncStatus(match: Match): void {
     const chips: string[] = [];

@@ -109,6 +109,7 @@ function fixture() {
   const service = new OnlineService(state, defaultMeta(), {
     changed() { changes++; }, matched(value) { entered.push(value.matchId); },
     action(action) { if (action.type === 'pin-target') actions.push(action.x); },
+    snapshot() {},
   });
   (service as unknown as { client: unknown }).client = client;
   return {

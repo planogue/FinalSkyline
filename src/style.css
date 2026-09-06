@@ -698,6 +698,57 @@ button:focus-visible, summary:focus-visible, input:focus-visible {
   color: #fff;
 }
 
+/* The wipeout countdown. Centred under the status chips, and unmissable. */
+.wipeout {
+  position: absolute;
+  top: calc(var(--top-h, 52px) + 46px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+  z-index: 6;
+  text-align: center;
+}
+
+.wipeout-label {
+  color: #ff5a4d;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+.wipeout-count {
+  color: #ff5a4d;
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 22px rgba(255, 90, 77, 0.55), 0 3px 10px rgba(0, 0, 0, 0.8);
+}
+
+/* Restarted by toggling the class as each new second lands. */
+.wipeout.tick .wipeout-count {
+  animation: wipeout-beat 0.45s ease-out;
+}
+
+@keyframes wipeout-beat {
+  from { transform: scale(1.35); opacity: 0.65; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wipeout.tick .wipeout-count { animation: none; }
+}
+
+@media (max-width: 620px) {
+  .wipeout-count { font-size: 46px; }
+  .wipeout-label { font-size: 10px; }
+}
+
 .friends {
   margin-top: 12px;
   padding-top: 10px;

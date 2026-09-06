@@ -1,6 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient, type User } from '@supabase/supabase-js';
 import type { MetaSave } from '../core/types';
 import { parseOnlineAction, type OnlineAction } from './actions';
+import { parseCitySnapshot, type CitySnapshot } from './snapshot';
 import { onlineDuration, onlineDurationLabel } from '../core/config';
 
 export type OnlinePhase = 'loading' | 'disabled' | 'signed-out' | 'ready' | 'queueing' | 'matched' | 'error';
@@ -71,6 +72,8 @@ interface OnlineCallbacks {
   changed(): void;
   matched(ticket: OnlineMatchTicket): void;
   action(action: OnlineAction): void;
+  /** The opponent's own account of their city, which overrides our guesswork. */
+  snapshot(snapshot: CitySnapshot): void;
 }
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -105,6 +108,8 @@ export class OnlineService {
   private queueTimer = 0;
   private channel: RealtimeChannel | null = null;
   private activeMatchId: string | null = null;
+  /** Who we are actually playing, so nobody else's chatter is believed. */
+  private opponentId: string | null = null;
   private seenEvents = new Set<string>();
   private eventBacklogReady = false;
   private bufferedEvents: MatchEventRow[] = [];
@@ -272,6 +277,19 @@ export class OnlineService {
     return this.actionTail;
   }
 
+  /**
+   * Publish our own city. Dropped silently if the channel is not up: the next
+   * one is two seconds away, and a missed snapshot costs nothing.
+   */
+  sendSnapshot(city: CitySnapshot): void {
+    if (!this.channel || !this.activeMatchId || !this.userId) return;
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'city',
+      payload: { from: this.userId, city },
+    });
+  }
+
   async reportResult(won: boolean, stars: number): Promise<void> {
     if (!this.client || !this.activeMatchId) return;
     const matchId = this.activeMatchId;
@@ -314,6 +332,7 @@ export class OnlineService {
     this.backlogRetryTimer = 0;
     this.channel = null;
     this.activeMatchId = null;
+    this.opponentId = null;
     this.lastEventId = 0;
     this.seenEvents.clear();
     this.eventBacklogReady = false;
@@ -346,6 +365,7 @@ export class OnlineService {
     window.clearInterval(this.queueTimer);
     this.queueTimer = 0;
     this.activeMatchId = ticket.matchId;
+    this.opponentId = ticket.opponentId;
     this.lastEventId = 0;
     this.seenEvents.clear();
     this.eventBacklogReady = false;
@@ -356,7 +376,19 @@ export class OnlineService {
     this.callbacks.matched(ticket);
 
     this.channel = this.client
-      .channel(`final-skyline:${ticket.matchId}:${this.userId}`)
+      // City snapshots are chatter, not history: they go out every couple of
+      // seconds and only the latest one matters, so they travel as ephemeral
+      // broadcast rather than being written to match_events and replayed.
+      .channel(`final-skyline:${ticket.matchId}`, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'city' }, (message) => {
+        if (connection !== this.matchConnection) return;
+        const payload = (message as { payload?: unknown }).payload as { from?: unknown; city?: unknown } | undefined;
+        // The topic is shared so the two players can hear each other, so take
+        // an account of the opposing city only from the player who owns it.
+        if (!payload || payload.from !== this.opponentId) return;
+        const snapshot = parseCitySnapshot(payload.city);
+        if (snapshot) this.callbacks.snapshot(snapshot);
+      })
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'match_events', filter: `match_id=eq.${ticket.matchId}` },

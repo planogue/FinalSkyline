@@ -21,6 +21,7 @@ import {
   type Match,
 } from './game/state';
 import { applyRemoteAction, type OnlineAction } from './online/actions';
+import { applyCitySnapshot, captureCity } from './online/snapshot';
 import { initialOnlineState, OnlineService, type OnlineMatchTicket } from './online/service';
 import { Camera } from './render/camera';
 import { drawScene } from './render/scene';
@@ -66,6 +67,8 @@ function enterMatch(match: Match): void {
   ui.placing = null;
   ui.placeX = null;
   onlineResultReported = false;
+  stepAcc = 0;
+  sinceCitySync = 0;
   camera.setMode('city');
   camera.snapTo(HOME_VIEW_X);
 }
@@ -202,6 +205,12 @@ onlineService = new OnlineService(online, meta, {
     if (!applyRemoteAction(match, onlineMatchMeta, action)) {
       console.warn('Ignored out-of-sync online action', action);
     }
+  },
+  snapshot(city) {
+    const match = host.match;
+    if (!match || match.mode !== 'online' || match.phase !== 'playing') return;
+    // Their account of their own city beats whatever this browser worked out.
+    applyCitySnapshot(match.enemy, city);
   },
 });
 void onlineService.init();
@@ -590,6 +599,18 @@ const debug = {
     m.player.money = before;
     return out;
   },
+  /** Playtesting helper: flatten your own city, to watch the losing countdown. */
+  levelCity() {
+    const m = host.match;
+    if (!m) return null;
+    for (const b of m.player.buildings) {
+      if (b.destroyed) continue;
+      b.hp = 0;
+      b.destroyed = true;
+      b.collapse = 0;
+    }
+    return m.player.buildings.length;
+  },
   /** Playtesting helper: knock the enemy city down to a given health fraction. */
   damageEnemy(fraction = 0.4) {
     const m = host.match;
@@ -666,12 +687,42 @@ const debug = {
 };
 (window as unknown as { __finalSkyline: typeof debug }).__finalSkyline = debug;
 
+/** Left-over time not yet handed to the simulation, in seconds. */
+let stepAcc = 0;
+/** Seconds since this player last told the opponent what their city looks like. */
+let sinceCitySync = 0;
+
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000) * Math.max(0.1, Math.min(20, debug.speed));
   last = now;
 
   const match = host.match;
-  if (match && host.screen === 'game' && match.phase === 'playing') stepMatch(match, dt, host.matchMeta());
+  if (match && host.screen === 'game' && match.phase === 'playing') {
+    // Always in steps of exactly MATCH.stepSeconds, however fast this machine
+    // paints. Stepping by the frame time instead meant a 60Hz laptop and a
+    // 144Hz desktop sampled every flight and every interception differently,
+    // and their two copies of the battle drifted apart from the first salvo.
+    stepAcc += dt;
+    // This frame's own share of time, plus a small budget to make up a short
+    // stall. Anything past that is dropped rather than sprinted through, so a
+    // stutter cannot snowball into the browser chasing its own tail.
+    const budget = Math.ceil(dt / MATCH.stepSeconds) + MATCH.maxStepsPerFrame;
+    let steps = 0;
+    while (stepAcc >= MATCH.stepSeconds && steps < budget) {
+      stepMatch(match, MATCH.stepSeconds, host.matchMeta());
+      stepAcc -= MATCH.stepSeconds;
+      steps++;
+    }
+    if (steps >= budget) stepAcc = 0;
+
+    if (match.mode === 'online' && match.phase === 'playing') {
+      sinceCitySync += dt;
+      if (sinceCitySync >= MATCH.citySyncSeconds) {
+        sinceCitySync = 0;
+        onlineService.sendSnapshot(captureCity(match.player));
+      }
+    }
+  }
   if (match?.result) {
     if (!overSaved) {
       overSaved = true;

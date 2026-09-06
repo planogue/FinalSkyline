@@ -239,12 +239,35 @@ None of these tables are readable directly: a player has no select rights on
 Everything goes through security-definer RPCs that return only a username and an
 online flag.
 
+### Keeping the two browsers in step
+
+Both browsers run the whole battle, so each holds its own copy of the opponent's city.
+Three things keep those copies together:
+
+- **A fixed timestep.** The simulation advances only in steps of `MATCH.stepSeconds`,
+  whatever rate the browser is painting at. Stepping by the frame time instead meant a
+  60Hz laptop and a 144Hz desktop sampled every flight and every interception
+  differently, and their copies drifted apart from the first salvo. A frame runs its own
+  share of steps plus a small catch-up budget; past that the backlog is dropped rather
+  than sprinted through, so a stutter cannot snowball.
+- **City snapshots.** Every `MATCH.citySyncSeconds`, each player broadcasts the true
+  state of their own land — what is standing, how battered, what defends it, what it can
+  afford — and the other browser takes their word for it over its own arithmetic. Nobody
+  is better placed to say what is left of your city than you are. These travel as
+  ephemeral Realtime broadcast rather than `match_events`, because only the latest one
+  matters and they should not be replayed on reconnect. The topic is shared so the two
+  players can hear each other, so a snapshot is believed only from the opponent named in
+  the match ticket.
+- **One ruling at the end**, below.
+
+Drift is therefore bounded by the snapshot interval instead of compounding all match,
+and the thing that decides the winner — whose city is standing — comes from the player
+who owns it.
+
 ### Ending a match
 
-Both browsers run the whole battle, so each one's copy of the *opponent's* city is only
-ever an approximation of theirs — two clients at different frame rates will not always
-agree about which interceptions landed. That means neither may decide the match on its
-own reading of the other side's ruins.
+Even so, neither browser may decide the match on its own reading of the other side's
+ruins between snapshots.
 
 The rule is that **a client announces its own defeat and waits to be told about a
 victory**:
@@ -259,10 +282,10 @@ victory**:
 Before this, each browser simply ended when its own simulation said so and told nobody,
 which is how one player could sit on a victory screen while the other was still playing.
 
-The two simulations can still drift, so a beaten player may be told they lost while their
-own screen shows a city that looks intact. Ending together on one ruling is the fix for
-the visible bug; making the two simulations agree in the first place needs a
-server-authoritative match, which is the note in **Current limitations** below.
+Between snapshots the two pictures can still differ for a second or two — a warhead may
+appear to land on one screen and be intercepted on the other — but the state that decides
+the match is corrected on every sync, so the two players are never fighting different
+wars for long.
 
 A profile row tied to the Auth user stores the public username, wins, losses, stars, and
 permanent upgrade levels. Queueing matches players who chose the same length — 5, 10 or
@@ -353,14 +376,14 @@ Pushing a commit to `main` starts a production deployment through the Git integr
 
 ## Current limitations
 
-- Online simulation is client-authoritative beta networking. RLS prevents one player
-  from entering another match, and the two clients now end together on a single ruling,
-  but they each run their own copy of the battle and those copies drift. A competitive or
-  ranked mode wants economy, combat and result authority on a trusted server.
+- Online play is client-authoritative. A fixed timestep, city snapshots and a single
+  end-of-match ruling keep the two browsers honest with each other, and RLS keeps a
+  player out of anyone else's match, but nothing stops a modified client from lying about
+  its own city. A competitive or ranked mode wants the economy, the combat and the result
+  on a trusted server.
 - If both clients somehow conclude they won — the damage totals they each tallied
   disagreeing in just the wrong direction at the final whistle — neither concedes and
-  both claim after the silence window. Rare, and the loser of the two is no longer left
-  playing on, but it is the same divergence problem underneath.
+  both claim after the silence window.
 - Per-launcher ammunition: rounds are a per-type pool shared by both batteries of a tier.
 - Moving or selling a battery once it is sited.
 - Taming the medium/hard overlap described above.

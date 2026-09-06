@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { MATCH, WORLD } from '../src/core/config';
+import { AA, MATCH, WORLD } from '../src/core/config';
 import { defaultMeta } from '../src/core/storage';
 import { stepMatch } from '../src/game/engine';
 import {
@@ -14,6 +14,7 @@ import {
   pinTarget,
 } from '../src/game/state';
 import { applyRemoteAction, parseOnlineAction, type OnlineAction } from '../src/online/actions';
+import { applyCitySnapshot, captureCity, parseCitySnapshot } from '../src/online/snapshot';
 
 const alice = createOnlineMatch('Bob', 600);
 const bob = createOnlineMatch('Alice', 600);
@@ -196,4 +197,81 @@ function run(match: ReturnType<typeof createOnlineMatch>, seconds: number): void
   assert.deepEqual({ ...settled.result! }, first, 'the first ruling stands');
 }
 
-console.log('Online mirror test passed: build, defence, ammo, upgrades, targeting, validation, and the end-of-match handshake stay in sync.');
+// ---------------------------------------------------------------------------
+// City snapshots. A player is the only one who can say what is left of their
+// own land, so their word replaces whatever the other browser worked out.
+// ---------------------------------------------------------------------------
+
+{
+  const home = createOnlineMatch('Bob', 600);
+  const away = createOnlineMatch('Alice', 600);
+  home.player.money = 5000;
+  assert(buyBuilding(home, home.player, 8, 2500));
+  assert(buyBuilding(home, home.player, 0, 2620));
+  assert(buyBattery(home.player, 3, 2750));
+  assert(buyBattery(home.player, 0, 2750), 'a radar shares the emplacement');
+  assert.equal(buyAmmo(home.player, 3, 7), 7);
+  home.player.buildings[1].hp = home.player.buildings[1].maxHp * 0.5;
+
+  const wire = parseCitySnapshot(JSON.parse(JSON.stringify(captureCity(home.player))));
+  assert(wire, 'a captured city survives the wire');
+  applyCitySnapshot(away.enemy, wire!);
+
+  assert.equal(away.enemy.buildings.length, 2);
+  // Buildings snap to a plot, so compare against where it actually went.
+  const tower = home.player.buildings.find((b) => b.type === 8)!;
+  assert.equal(
+    Math.round(away.enemy.buildings.find((b) => b.type === 8)!.x),
+    Math.round(WORLD.width - Math.round(tower.x)),
+    'positions arrive mirrored',
+  );
+  assert.equal(away.enemy.batteries.length, 2, 'both systems on the shared plot');
+  assert.equal(away.enemy.aaOwned[3], 1);
+  assert.equal(away.enemy.aaOwned[0], 1);
+  assert.equal(away.enemy.ammo[3], 7, 'magazines come across');
+  assert.equal(away.enemy.money, Math.round(home.player.money), 'so does the cash that gates their orders');
+  const half = away.enemy.buildings.find((b) => b.type === 0)!;
+  assert(Math.abs(half.hp / half.maxHp - 0.5) < 0.02, 'and the damage they have taken');
+
+  // A second snapshot must not rebuild what is already there, or every tower
+  // would blink its windows and restart its collapse twice a second.
+  const seeds = away.enemy.buildings.map((b) => b.seed);
+  const uids = away.enemy.buildings.map((b) => b.uid);
+  applyCitySnapshot(away.enemy, parseCitySnapshot(JSON.parse(JSON.stringify(captureCity(home.player))))!);
+  assert.deepEqual(away.enemy.buildings.map((b) => b.seed), seeds, 'existing towers are reused');
+  assert.deepEqual(away.enemy.buildings.map((b) => b.uid), uids);
+
+  // What they say is gone, is gone — even if this browser thought otherwise.
+  home.player.buildings[0].hp = 0;
+  home.player.buildings[0].destroyed = true;
+  applyCitySnapshot(away.enemy, parseCitySnapshot(JSON.parse(JSON.stringify(captureCity(home.player))))!);
+  assert.equal(away.enemy.buildings.find((b) => b.type === 8)!.destroyed, true, 'their ruins are ruins here too');
+  assert.equal(
+    away.enemy.buildings.filter((b) => !b.destroyed).length,
+    1,
+    'and the rubble still holds its plot',
+  );
+
+  // Selling the story short: anything the other side no longer has, goes.
+  home.player.batteries.length = 0;
+  applyCitySnapshot(away.enemy, parseCitySnapshot(JSON.parse(JSON.stringify(captureCity(home.player))))!);
+  assert.equal(away.enemy.batteries.length, 0, 'batteries they lost are removed');
+  assert.deepEqual(away.enemy.aaOwned, AA.map(() => 0), 'and stop counting against their cap');
+}
+
+// Nothing off the wire is trusted until it has proved its shape.
+for (const junk of [
+  null,
+  'city',
+  {},
+  { b: [], a: [], r: [0, 0, 0, 0, 0, 0] },
+  { b: [[99, 100, 50]], a: [], r: [0, 0, 0, 0, 0, 0], m: 0 },
+  { b: [[0, 100, 500]], a: [], r: [0, 0, 0, 0, 0, 0], m: 0 },
+  { b: [[0, Number.NaN, 50]], a: [], r: [0, 0, 0, 0, 0, 0], m: 0 },
+  { b: [], a: [], r: [0, 0, 0], m: 0 },
+  { b: Array.from({ length: 500 }, () => [0, 100, 50]), a: [], r: [0, 0, 0, 0, 0, 0], m: 0 },
+]) {
+  assert.equal(parseCitySnapshot(junk), null, `rejected: ${JSON.stringify(junk)?.slice(0, 40)}`);
+}
+
+console.log('Online mirror test passed: build, defence, ammo, upgrades, targeting, validation, city snapshots, and the end-of-match handshake stay in sync.');
