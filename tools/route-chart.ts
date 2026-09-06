@@ -25,7 +25,7 @@ const paths = MISSILES.map((def) => {
 
 const legend = paths
   .map(({ def, flight }, i) => {
-    const y = 40 + i * 22;
+    const y = 60 + i * 22;
     return `<rect x="60" y="${y - 11}" width="26" height="4" fill="${def.color}" stroke="#000" stroke-width="0.5"/>
     <text x="96" y="${y - 4}" fill="#dfe6ee" font-size="15" font-family="system-ui, sans-serif">
       ${def.roman} · ${def.name} · ${def.speed} m/s · ${flight.toFixed(2)}s · ${def.route}
@@ -33,8 +33,17 @@ const legend = paths
   })
   .join('\n');
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${WORLD.width} ${WORLD.height}" width="${WORLD.width}" height="${WORLD.height}">
-  <rect width="${WORLD.width}" height="${WORLD.height}" fill="#151a22"/>
+// The lofted tiers climb far above the world, so widen the frame to fit them
+// and mark where the top of the screen actually is.
+const top = Math.min(0, ...paths.flatMap(({ d }) => d.split(' L ').map((p) => Number(p.split(',')[1]))));
+const y0 = Math.floor(top - 60);
+const height = WORLD.height - y0;
+
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 ${y0} ${WORLD.width} ${height}" width="${WORLD.width}" height="${height}">
+  <rect x="0" y="${y0}" width="${WORLD.width}" height="${height}" fill="#0d1016"/>
+  <rect x="0" y="0" width="${WORLD.width}" height="${WORLD.height}" fill="#151a22"/>
+  <line x1="0" y1="0" x2="${WORLD.width}" y2="0" stroke="#5b6675" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="20" y="-14" fill="#8593a5" font-size="17" font-family="system-ui, sans-serif">top of the world — everything above here is off screen</text>
   <rect x="${WORLD.cityLeft.x0}" y="${WORLD.groundY - tallest}" width="${WORLD.cityLeft.x1 - WORLD.cityLeft.x0}" height="${tallest}" fill="#242c38"/>
   <rect x="${WORLD.cityRight.x0}" y="${WORLD.groundY - tallest}" width="${WORLD.cityRight.x1 - WORLD.cityRight.x0}" height="${tallest}" fill="#242c38"/>
   <text x="${WORLD.cityLeft.x0 + 12}" y="${WORLD.groundY - tallest - 10}" fill="#6d7a8a" font-size="15" font-family="system-ui, sans-serif">enemy city (tallest skyline)</text>

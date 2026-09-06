@@ -177,12 +177,37 @@ tools/probe.ts           one instrumented match, sampled every 30 s
 tools/online-sim.ts      mirror/validation check for online commands
 ```
 
+### Ordnance
+
 Launchers sit behind their own city, so a rocket climbs over its own skyline before
-crossing. Flight times are still measured from the old pad in front of the city, so
-moving them back did not add a second to any shot — each rocket covers the longer route
-at a correspondingly higher real speed, and that real speed is what the interceptor
-predictor is told about. `npm run probe:intercept` is the check that keeps the two in
-step.
+crossing. Two flight paths are in use, set per tier in `src/core/config.ts`:
+
+- **`arc`** (tiers I–III) — a single lofted parabola that stays in shot the whole way.
+  It clears a distant skyline but comes down along a shallow line, so a tower standing
+  just in front of the pin takes the hit instead.
+- **`lofted`** (tiers IV–VI) — straight up off the pad, then a climb clean out of the
+  top of the world and a near-vertical dive back onto the mark. The warhead is out of
+  sight for the middle of its flight in either zoom level and arrives like a meteorite.
+  The dive is steep enough to drop past a neighbouring tower onto the plot beside it,
+  but it still comes in at an angle: to hit a roof, aim at the tower, not its far lip.
+
+Flight times are measured against a fixed reference shape flown from the old pad in
+front of the city, so neither moving a launcher nor restyling a flight path changes how
+long a shot takes — each rocket covers its real route at a correspondingly higher speed,
+and it is that speed the interceptor predictor is told about rather than the catalogue
+figure. `npm run chart:routes` draws the paths; `npm run probe:intercept` is the check
+that keeps the ballistics and the defences in step.
+
+Heavier tiers open one at a time: tier N needs tier N−1 unlocked, so a player who has
+saved up cannot skip straight to the biggest warhead.
+
+### Emplacements
+
+Anti-air systems share a plot rather than needing room of their own. Drop one within
+`AA_SITE_SNAP` of an existing emplacement and it joins that site, up to
+`AA_STACK_LIMIT` systems deep; the renderer fans a shared site out so nothing hides
+behind anything else. A side siting its own defences still spreads them across the city,
+because scattered cover beats one very well defended plot.
 
 Tuning the game means editing `src/core/config.ts` and re-running `npm run sim`.
 
@@ -280,9 +305,11 @@ Caveats before you re-tune:
   batteries, magazines, shots fired and intercepted for both sides. That is far more use
   for finding *why* a side collapses than the win-rate table.
 - `npm run probe:intercept` tabulates, for every missile tier, how far from the impact
-  point a battery can sit and still stop it. Run it after any speed change: the top tiers
-  cross the map in well under a second, and it fails the build if nothing can answer the
-  heaviest warhead at all.
+  point a battery can sit and still stop it, then checks the rest of the anti-air
+  contract: an empty battery holds fire, a kill costs exactly one round, a system ignores
+  tiers it cannot touch, two batteries share a salvo instead of doubling up on one
+  warhead, a five-deep emplacement covers every tier it has a launcher for, and both
+  sides run the same path. Run it after any speed or trajectory change.
 - `npm run probe:render` asserts headlessly that enemy radars stay unpainted until the
   intel upgrade is bought.
 - `npm run chart:routes` writes `route-chart.svg`, every tier's flight path drawn from

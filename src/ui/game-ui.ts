@@ -1,6 +1,7 @@
 import {
   AA,
   AA_MAX_PER_TYPE,
+  AA_STACK_LIMIT,
   BUILDINGS,
   BOTS,
   MATCH,
@@ -26,6 +27,7 @@ import {
   buyAmmo,
   buyMissileUpgrade,
   buyRadarIntel,
+  canUnlockMissile,
   cityValue,
   clearQueue,
   countBuildings,
@@ -127,6 +129,13 @@ const clock = (s: number): string => {
   const t = Math.max(0, Math.floor(s));
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
+
+/** What a battery is good for, from the battery's side of the question. */
+function interceptsWhat(def: (typeof AA)[number]): string {
+  const tiers = MISSILES.filter((m) => canIntercept(def, m.tier));
+  if (!tiers.length) return 'spots incoming fire';
+  return `intercepts ${tiers.map((m) => m.roman).join(' and ')} only`;
+}
 
 /** Plain-English summary of which systems can engage a missile tier. */
 function interceptedBy(tier: number): string {
@@ -688,7 +697,7 @@ export class GameUI {
         title:
           def.interceptsTier === 0
             ? 'Radar — early warning: impact markers appear seconds sooner and off-screen missiles get tracked'
-            : `${def.name} — intercepts tier ${def.roman} missiles only`,
+            : `${def.name} — ${interceptsWhat(def)}. Up to ${AA_STACK_LIMIT} systems can share one emplacement`,
         onClick: () => {
           const match = this.host.match;
           if (!match) return;
@@ -815,7 +824,11 @@ export class GameUI {
           if (!match) return;
           if (!match.player.missileUnlocked[def.tier - 1]) {
             audio.deny();
-            this.toast(`Unlock ${def.name} in Upgrades ($${def.unlockCost})`);
+            this.toast(
+              canUnlockMissile(match.player, def.tier)
+                ? `Unlock ${def.name} in Upgrades ($${def.unlockCost})`
+                : `Unlock ${MISSILES[def.tier - 2].name} ${MISSILES[def.tier - 2].roman} first`,
+            );
             return;
           }
           audio.click();
@@ -996,10 +1009,10 @@ export class GameUI {
     help.innerHTML = `<summary style="cursor:pointer;font-weight:800;color:#dfe6ee;padding:6px 0">How it works</summary>
       <ul style="padding-left:18px;margin:6px 0">
         <li><b>Buildings</b> pay income every 2 seconds. Pick a type, then tap a free plot on your land to place it. Each type has a cap that rises by one every ${MATCH.limitStepSeconds / 60} minutes; a levelled building frees its slot so you can rebuild.</li>
-        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it wherever you like. A radar takes no room of its own, so it can share a plot with a launcher. Batteries can be bombed, and replaced once they are.</li>
+        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it wherever you like; drop one onto an existing emplacement and it joins it, up to ${AA_STACK_LIMIT} systems deep. Batteries can be bombed, and replaced once they are.</li>
         <li><b>ABM rounds</b> are the ammunition. An empty battery cannot intercept anything.</li>
         <li><b>Upgrades</b> (in-match, paid in cash) widen defence radius, cut anti-air reload, and unlock heavier missiles.</li>
-        <li><b>Attacking</b>: open ICBM, pick a tier, tap their city to pin targets, then hit Fight. Each tier launches on its own reload timer.</li>
+        <li><b>Attacking</b>: open ICBM, pick a tier, tap their city to pin targets, then hit Fight. Each tier launches on its own reload timer, and heavier tiers unlock one at a time — you cannot skip ahead to the big warheads.</li>
         <li><b>Stars</b> earned from matches buy permanent radius and reload upgrades in the Star Shop.</li>
         <li><b>Keyboard</b>: B buildings, A anti-air, R ammunition, U upgrades, I missiles. Number keys select an item. T moves to targeting; arrows move the cursor (up/down make larger jumps, Shift moves precisely). Enter places or pins, F/Space fights, Z undoes a pin, C clears pins, X cycles ammo quantities. P pauses, V changes view, G shows coverage, M mutes, H hides keyboard hints. Tab and Enter operate menus and the Star Shop. In Upgrades, choose R (radius), D (defence reload), or M (missiles), then a number.</li>
       </ul>`;
@@ -1606,7 +1619,7 @@ export class GameUI {
     );
 
     mkRow(
-      'Unlock missiles / reduce launch reload',
+      'Unlock missiles in order / reduce launch reload',
       MISSILES.map((def) => {
         const i = def.tier - 1;
         return upgradeCard(
@@ -1618,9 +1631,14 @@ export class GameUI {
             match.player.missileUnlocked[i] ? `$${match.player.missileReloadPrice[i]}` : `$${def.unlockCost}`,
           '',
           () =>
+            (match.player.missileUnlocked[i] || canUnlockMissile(match.player, def.tier)) &&
             match.player.money >=
-            (match.player.missileUnlocked[i] ? match.player.missileReloadPrice[i] : def.unlockCost),
+              (match.player.missileUnlocked[i] ? match.player.missileReloadPrice[i] : def.unlockCost),
           () => {
+            if (!match.player.missileUnlocked[i] && !canUnlockMissile(match.player, def.tier)) {
+              this.toast(`Unlock ${MISSILES[i - 1].name} ${MISSILES[i - 1].roman} first`);
+              return false;
+            }
             const bought = buyMissileUpgrade(match.player, def.tier, meta) !== false;
             if (bought) this.host.sendOnlineAction({ type: 'missile-upgrade', tier: def.tier });
             return bought;
@@ -1631,13 +1649,17 @@ export class GameUI {
     );
 
     // The delta labels on the missile row switch between Unlock and -0.1s.
+    // Address the row by its index: it stopped being the last one when the
+    // radar-intel row was added below it.
     this.upgradeUpdates.push(() => {
-      const rows = wrap.querySelectorAll('.row');
-      const missileRow = rows[rows.length - 1];
+      const missileRow = wrap.querySelector('[data-upgrade-row="2"]');
+      if (!missileRow) return;
       missileRow.querySelectorAll('.card').forEach((card, i) => {
         const d = card.querySelector('.delta') as HTMLElement;
-        d.textContent = match.player.missileUnlocked[i] ? `-${MISSILES[i].reloadStep}s` : 'Unlock';
-        d.style.color = match.player.missileUnlocked[i] ? '#1a9c46' : '#0d7a35';
+        const unlocked = match.player.missileUnlocked[i];
+        const reachable = canUnlockMissile(match.player, i + 1);
+        d.textContent = unlocked ? `-${MISSILES[i].reloadStep}s` : reachable ? 'Unlock' : 'Locked';
+        d.style.color = unlocked ? '#1a9c46' : reachable ? '#0d7a35' : '#8a5a1c';
       });
     });
 

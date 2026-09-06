@@ -3,6 +3,9 @@ import {
   BUILDINGS,
   FLAT_APPROACH_ALTITUDE_SHARE,
   INTERCEPTOR_MIN_SPEED,
+  LOFT_APEX_SHARE,
+  LOFT_APEX_Y,
+  LOFT_RISE,
   INTERCEPTOR_SPEED_FACTOR,
   MIN_INTERCEPT_ALTITUDE,
   MIN_INTERCEPT_LEAD,
@@ -37,18 +40,60 @@ function arcHeight(dist: number): number {
 
 type RouteSpec =
   | { kind: 'arc'; height: number; length: number }
+  | {
+      kind: 'lofted';
+      liftY: number;
+      apexX: number;
+      apexY: number;
+      rise: number;
+      climb: number;
+      dive: number;
+      length: number;
+    }
   | { kind: 'cruise'; direction: number; bend: number; rise: number; turn: number; crossing: number; length: number };
 
+interface RoutePoints {
+  x0: number;
+  y0: number;
+  tx: number;
+  ty: number;
+  tier: number;
+}
+
 /**
- * Tiers I–III fly the original lofted parabola; the heavy tiers launch
- * vertically, cross high and dive straight down onto the marked plot.
+ * The path a warhead is drawn along. Tiers I–III fly the original lofted
+ * parabola, low enough to stay on screen the whole way; the heavy tiers climb
+ * out of the top of the world and come back down in a steep dive.
  */
-function missileRoute(m: Pick<Missile, 'x0' | 'y0' | 'tx' | 'ty' | 'tier'>): RouteSpec {
+function missileRoute(m: RoutePoints): RouteSpec {
   const distance = Math.abs(m.tx - m.x0);
   if (MISSILES[m.tier - 1].route === 'arc') {
     const height = arcHeight(distance);
-    // Arc-tier progress is parameterised by ground distance, so `length` is
-    // only used to derive the flight time; the shape comes from the sine term.
+    // Arc progress is parameterised by ground distance, so `length` only feeds
+    // the sub-stepping; the shape comes from the sine term.
+    return { kind: 'arc', height, length: distance + 1.9 * height };
+  }
+  // Straight up off the pad first, so the warhead is over its own rooftops
+  // before it tips towards the apex.
+  const liftY = m.y0 - LOFT_RISE;
+  const apexX = m.x0 + (m.tx - m.x0) * LOFT_APEX_SHARE;
+  const apexY = LOFT_APEX_Y;
+  const rise = LOFT_RISE;
+  const climb = Math.hypot(apexX - m.x0, apexY - liftY);
+  const dive = Math.hypot(m.tx - apexX, m.ty - apexY);
+  return { kind: 'lofted', liftY, apexX, apexY, rise, climb, dive, length: rise + climb + dive };
+}
+
+/**
+ * The shape flight times are measured against, which is deliberately *not* the
+ * shape above. Timings were tuned when the launchers stood in front of the city
+ * flying a cruise profile; keeping that as the yardstick means restyling a
+ * flight path, or moving a pad, never silently makes a tier slower or faster.
+ */
+function referenceRoute(m: RoutePoints): RouteSpec {
+  const distance = Math.abs(m.tx - m.x0);
+  if (MISSILES[m.tier - 1].route === 'arc') {
+    const height = arcHeight(distance);
     return { kind: 'arc', height, length: distance + 1.9 * height };
   }
   const direction = Math.sign(m.tx - m.x0);
@@ -57,8 +102,11 @@ function missileRoute(m: Pick<Missile, 'x0' | 'y0' | 'tx' | 'ty' | 'tier'>): Rou
   const turn = Math.PI * bend / 2;
   const crossing = distance - bend * 2;
   const fall = m.ty - CRUISE_Y - bend;
-  const length = rise + turn * 2 + crossing + fall;
-  return { kind: 'cruise', direction, bend, rise, turn, crossing, length };
+  return { kind: 'cruise', direction, bend, rise, turn, crossing, length: rise + turn * 2 + crossing + fall };
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 function missileOnRoute(m: Missile, t: number, route: RouteSpec): { x: number; y: number } {
@@ -68,6 +116,19 @@ function missileOnRoute(m: Missile, t: number, route: RouteSpec): { x: number; y
     const x = m.x0 + (m.tx - m.x0) * t;
     const base = m.y0 + (m.ty - m.y0) * t;
     return { x, y: base - route.height * Math.sin(Math.PI * t) };
+  }
+  if (route.kind === 'lofted') {
+    let travelled = t * route.length;
+    if (travelled <= route.rise) {
+      return { x: m.x0, y: m.y0 - travelled };
+    }
+    travelled -= route.rise;
+    if (travelled <= route.climb) {
+      const f = route.climb > 0 ? travelled / route.climb : 1;
+      return { x: lerp(m.x0, route.apexX, f), y: lerp(route.liftY, route.apexY, f) };
+    }
+    const f = route.dive > 0 ? (travelled - route.climb) / route.dive : 1;
+    return { x: lerp(route.apexX, m.tx, f), y: lerp(route.apexY, m.ty, f) };
   }
   const { direction, bend, rise, turn, crossing, length } = route;
   let distance = t * length;
@@ -97,10 +158,13 @@ function missileOnRoute(m: Missile, t: number, route: RouteSpec): { x: number; y
 /**
  * Fractions of the flight where the path changes direction. A long frame must
  * never sweep a straight shortcut across one of them into a building the
- * missile was going to fly over. The smooth parabola has none.
+ * warhead was going to fly over. The smooth parabola has none.
  */
 function routeCheckpoints(route: RouteSpec): number[] {
   if (route.kind === 'arc') return [];
+  if (route.kind === 'lofted') {
+    return route.length > 0 ? [route.rise / route.length, (route.rise + route.climb) / route.length] : [];
+  }
   const { rise, turn, crossing, length } = route;
   return [rise, rise + turn, rise + turn + crossing, rise + turn * 2 + crossing].map((d) => d / length);
 }
@@ -115,12 +179,13 @@ export function spawnMissile(state: SideState, tier: number, targetX: number): M
   const y0 = WORLD.groundY - 14;
   const ty = WORLD.groundY;
   const route = missileRoute({ x0, y0, tx: targetX, ty, tier });
-  // Timing is measured from the old pad in front of the city, so moving the
-  // launchers round the back did not add seconds to every shot. The rocket
-  // therefore covers its longer route at a correspondingly higher real speed —
-  // which is the speed the interceptors have to be told about, not the
-  // catalogue figure, or nothing would ever be shot down again.
-  const reference = missileRoute({ x0: launchPadReferenceX(state.side), y0, tx: targetX, ty, tier });
+  // Timing comes from the reference shape flown from the old pad in front of
+  // the city, so neither moving the launchers nor restyling the flight path
+  // changes how long a shot takes. The warhead therefore covers its real route
+  // at a correspondingly higher speed — and that is the speed the interceptors
+  // have to be told about, not the catalogue figure, or a lofted shot would be
+  // untouchable.
+  const reference = referenceRoute({ x0: launchPadReferenceX(state.side), y0, tx: targetX, ty, tier });
   const flightTime = reference.length / def.speed;
   const speed = route.length / flightTime;
   const m: Missile = {

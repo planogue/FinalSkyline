@@ -504,7 +504,7 @@ function isRadar(type: number): boolean {
   return AA[type].interceptsTier === 0;
 }
 
-/** World units a stacked installation fans out by, so nothing is fully hidden. */
+/** World units a stacked emplacement fans out by, so nothing is fully hidden. */
 const STACK_SPREAD = 15;
 
 /**
@@ -514,6 +514,8 @@ const STACK_SPREAD = 15;
  */
 function stackLayout(batteries: AaBattery[]): { battery: AaBattery; offset: number }[] {
   const perPlot = new Map<number, number>();
+  // Placement snaps a stacked battery onto the exact x of the site it joined,
+  // so grouping on the rounded position collects a whole emplacement.
   for (const b of batteries) {
     const key = Math.round(b.x);
     perPlot.set(key, (perPlot.get(key) ?? 0) + 1);

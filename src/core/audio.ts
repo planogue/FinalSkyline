@@ -50,6 +50,10 @@ export const audio = {
   },
 
   /**
+   * A launch. Motor ignition is a pressure crack followed by a long roar that
+   * thins out as the rocket climbs away — all noise and no pitch, because a
+   * rocket motor has no note to it. Heavier tiers sit lower and burn longer.
+   *
    * @param pan -1 (far left) .. 1 (far right), used so off-screen action is
    *            still audible in the right ear.
    */
@@ -57,82 +61,183 @@ export const audio = {
     const c = ac();
     if (!c || muted) return;
     const t = c.currentTime;
-    const out = panner(c, pan, 0.55);
+    const out = panner(c, pan, 0.6);
+    const size = Math.max(0, Math.min(1, (tier - 1) / 5));
+    const burn = 1.1 + size * 1.1;
 
-    // Rocket motor: filtered noise that opens up as it climbs.
-    const src = c.createBufferSource();
-    src.buffer = noise(c);
-    src.loop = true;
-    const bp = c.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.setValueAtTime(180 + tier * 60, t);
-    bp.frequency.exponentialRampToValueAtTime(900 + tier * 220, t + 0.5);
-    bp.Q.value = 1.1;
-    const g = c.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.5, t + 0.05);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.85);
-    src.connect(bp).connect(g).connect(out);
-    src.start(t);
-    src.stop(t + 0.9);
+    // Ignition: a hard slap of pressure as the motor catches.
+    const crack = c.createBufferSource();
+    crack.buffer = noise(c);
+    crack.playbackRate.value = 0.9;
+    const crackFilter = c.createBiquadFilter();
+    crackFilter.type = 'bandpass';
+    crackFilter.frequency.value = 320 - size * 120;
+    crackFilter.Q.value = 0.6;
+    const crackGain = c.createGain();
+    crackGain.gain.setValueAtTime(0.9, t);
+    crackGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    crack.connect(crackFilter).connect(crackGain).connect(out);
+    crack.start(t);
+    crack.stop(t + 0.2);
 
-    // Low thump on ignition.
-    const osc = c.createOscillator();
-    const og = c.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(120 - tier * 6, t);
-    osc.frequency.exponentialRampToValueAtTime(38, t + 0.35);
-    og.gain.setValueAtTime(0.55, t);
-    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
-    osc.connect(og).connect(out);
-    osc.start(t);
-    osc.stop(t + 0.42);
+    // The roar itself: two noise layers, the lower one carrying the body and
+    // the upper one the hiss of the exhaust, both fading as it gains height.
+    for (const layer of [0, 1]) {
+      const src = c.createBufferSource();
+      src.buffer = noise(c);
+      src.loop = true;
+      src.playbackRate.value = layer === 0 ? 0.55 : 1.5;
+      const filter = c.createBiquadFilter();
+      if (layer === 0) {
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(900 - size * 300, t);
+        filter.frequency.exponentialRampToValueAtTime(140, t + burn);
+      } else {
+        filter.type = 'highpass';
+        filter.frequency.setValueAtTime(1400, t);
+        filter.frequency.exponentialRampToValueAtTime(4200, t + burn);
+      }
+      const g = c.createGain();
+      const level = layer === 0 ? 0.75 : 0.3;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(level, t + 0.07);
+      g.gain.setValueAtTime(level, t + burn * 0.3);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + burn);
+      src.connect(filter).connect(g).connect(out);
+      src.start(t);
+      src.stop(t + burn + 0.05);
+    }
+
+    // Ground shock under the pad.
+    const sub = c.createOscillator();
+    const sg = c.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(70 - size * 20, t);
+    sub.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+    sg.gain.setValueAtTime(0.0001, t);
+    sg.gain.exponentialRampToValueAtTime(0.8, t + 0.03);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    sub.connect(sg).connect(out);
+    sub.start(t);
+    sub.stop(t + 0.6);
   },
 
+  /** An interceptor leaving the rail: a bang out of the tube, then hiss. */
   interceptorLaunch(pan = 0): void {
     const c = ac();
     if (!c || muted) return;
     const t = c.currentTime;
-    const out = panner(c, pan, 0.4);
-    const osc = c.createOscillator();
-    const g = c.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(420, t);
-    osc.frequency.exponentialRampToValueAtTime(1500, t + 0.22);
-    g.gain.setValueAtTime(0.22, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-    osc.connect(g).connect(out);
-    osc.start(t);
-    osc.stop(t + 0.32);
+    const out = panner(c, pan, 0.45);
+
+    const bang = c.createBufferSource();
+    bang.buffer = noise(c);
+    bang.playbackRate.value = 1.1;
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2600, t);
+    lp.frequency.exponentialRampToValueAtTime(500, t + 0.14);
+    const bg = c.createGain();
+    bg.gain.setValueAtTime(0.85, t);
+    bg.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    bang.connect(lp).connect(bg).connect(out);
+    bang.start(t);
+    bang.stop(t + 0.18);
+
+    // The motor tearing away, thinning as it goes rather than sliding in pitch.
+    const trail = c.createBufferSource();
+    trail.buffer = noise(c);
+    trail.playbackRate.value = 1.4;
+    const hp = c.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(900, t);
+    hp.frequency.exponentialRampToValueAtTime(5200, t + 0.55);
+    const tg = c.createGain();
+    tg.gain.setValueAtTime(0.0001, t);
+    tg.gain.exponentialRampToValueAtTime(0.42, t + 0.04);
+    tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+    trail.connect(hp).connect(tg).connect(out);
+    trail.start(t);
+    trail.stop(t + 0.62);
+
+    const thump = c.createOscillator();
+    const thg = c.createGain();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(110, t);
+    thump.frequency.exponentialRampToValueAtTime(45, t + 0.16);
+    thg.gain.setValueAtTime(0.45, t);
+    thg.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    thump.connect(thg).connect(out);
+    thump.start(t);
+    thump.stop(t + 0.22);
   },
 
+  /**
+   * A kill in the sky: the sharp crack of a warhead going off at altitude,
+   * with no ground to reflect off, so it is all snap and a short rattle of
+   * fragments rather than the rolling boom of an impact.
+   */
   intercept(pan = 0): void {
     const c = ac();
     if (!c || muted) return;
     const t = c.currentTime;
-    const out = panner(c, pan, 0.6);
-    const src = c.createBufferSource();
-    src.buffer = noise(c);
+    const out = panner(c, pan, 0.7);
+
+    const crack = c.createBufferSource();
+    crack.buffer = noise(c);
+    crack.playbackRate.value = 1.8;
     const hp = c.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = 900;
-    const g = c.createGain();
-    g.gain.setValueAtTime(0.55, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-    src.connect(hp).connect(g).connect(out);
-    src.start(t);
-    src.stop(t + 0.32);
+    hp.frequency.value = 1800;
+    const cg = c.createGain();
+    cg.gain.setValueAtTime(0.95, t);
+    cg.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    crack.connect(hp).connect(cg).connect(out);
+    crack.start(t);
+    crack.stop(t + 0.09);
 
-    const osc = c.createOscillator();
-    const og = c.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(880, t);
-    osc.frequency.exponentialRampToValueAtTime(180, t + 0.18);
-    og.gain.setValueAtTime(0.25, t);
-    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-    osc.connect(og).connect(out);
-    osc.start(t);
-    osc.stop(t + 0.22);
+    // Short body: thin, because there is nothing up there to ring against.
+    const body = c.createBufferSource();
+    body.buffer = noise(c);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(3200, t);
+    lp.frequency.exponentialRampToValueAtTime(240, t + 0.34);
+    const bg = c.createGain();
+    bg.gain.setValueAtTime(0.0001, t);
+    bg.gain.exponentialRampToValueAtTime(0.7, t + 0.008);
+    bg.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+    body.connect(lp).connect(bg).connect(out);
+    body.start(t);
+    body.stop(t + 0.38);
+
+    const sub = c.createOscillator();
+    const sg = c.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(120, t);
+    sub.frequency.exponentialRampToValueAtTime(48, t + 0.22);
+    sg.gain.setValueAtTime(0.45, t);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+    sub.connect(sg).connect(out);
+    sub.start(t);
+    sub.stop(t + 0.28);
+
+    // Fragments spitting outwards.
+    for (let i = 0; i < 7; i++) {
+      const at = t + 0.03 + Math.random() * 0.3;
+      const frag = c.createBufferSource();
+      frag.buffer = noise(c);
+      frag.playbackRate.value = 1.6 + Math.random();
+      const bp = c.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1400 + Math.random() * 2600;
+      bp.Q.value = 2.2;
+      const fg = c.createGain();
+      fg.gain.setValueAtTime(0.16, at);
+      fg.gain.exponentialRampToValueAtTime(0.0001, at + 0.07);
+      frag.connect(bp).connect(fg).connect(out);
+      frag.start(at);
+      frag.stop(at + 0.09);
+    }
   },
 
   /**

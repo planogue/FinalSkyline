@@ -113,10 +113,12 @@ export interface MissileDef {
   /** No same-tier battery exists; only a system listing this tier in `alsoIntercepts` can touch it. */
   unstoppable?: boolean;
   /**
-   * Flight path. 'arc' is the original single parabola; 'cruise' is the
-   * vertical launch, high crossing and vertical dive.
+   * Flight path. 'arc' is the original single parabola, kept low enough to
+   * stay in shot the whole way. 'lofted' is a hard climb to an apex far above
+   * the top of the screen and a steep dive back onto the target — the heavy
+   * tiers leave the view entirely and come down like a meteorite.
    */
-  route: 'arc' | 'cruise';
+  route: 'arc' | 'lofted';
   /** Hard cap of shots per match (0 = unlimited). */
   perMatchLimit: number;
   color: string;
@@ -127,9 +129,9 @@ export const MISSILES: MissileDef[] = [
   { tier: 1, name: 'Scud',      roman: 'I',   cost: 1.5, reload: 5.0, speed: 255, damage: 15,   blast: 16, unlockCost: 0,   reloadUpgradeCost: 5,   reloadStep: 0.1, perMatchLimit: 0, color: '#c8d2dc', length: 15, route: 'arc' },
   { tier: 2, name: 'Tochka',    roman: 'II',  cost: 4,   reload: 5.0, speed: 340, damage: 45,   blast: 22, unlockCost: 10,  reloadUpgradeCost: 10,  reloadStep: 0.1, perMatchLimit: 0, color: '#a9c6a2', length: 18, route: 'arc' },
   { tier: 3, name: 'Iskander',  roman: 'III', cost: 8,   reload: 5.0, speed: 460, damage: 120,  blast: 30, unlockCost: 30,  reloadUpgradeCost: 22,  reloadStep: 0.1, perMatchLimit: 0, color: '#8fa8bf', length: 22, route: 'arc' },
-  { tier: 4, name: 'Topol',     roman: 'IV',  cost: 15,  reload: 5.0, speed: 560, damage: 300,  blast: 40, unlockCost: 80,  reloadUpgradeCost: 40,  reloadStep: 0.1, perMatchLimit: 0, color: '#d8d8d8', length: 26, route: 'cruise' },
-  { tier: 5, name: 'Satan II',  roman: 'V',   cost: 30,  reload: 5.0, speed: 1500, damage: 700, blast: 55, unlockCost: 120, reloadUpgradeCost: 65,  reloadStep: 0.1, perMatchLimit: 0, color: '#3f4750', length: 30, route: 'cruise' },
-  { tier: 6, name: 'Bunker Buster', roman: 'VI', cost: 80, reload: 5.0, speed: 3600, damage: 1500, blast: 95, unlockCost: 600, reloadUpgradeCost: 300, reloadStep: 0.1, unstoppable: true, perMatchLimit: 0, color: '#6d6a4f', length: 34, route: 'cruise' },
+  { tier: 4, name: 'Topol',     roman: 'IV',  cost: 15,  reload: 5.0, speed: 560, damage: 300,  blast: 40, unlockCost: 80,  reloadUpgradeCost: 40,  reloadStep: 0.1, perMatchLimit: 0, color: '#d8d8d8', length: 26, route: 'lofted' },
+  { tier: 5, name: 'Satan II',  roman: 'V',   cost: 30,  reload: 5.0, speed: 1500, damage: 700, blast: 55, unlockCost: 120, reloadUpgradeCost: 65,  reloadStep: 0.1, perMatchLimit: 0, color: '#3f4750', length: 30, route: 'lofted' },
+  { tier: 6, name: 'Bunker Buster', roman: 'VI', cost: 80, reload: 5.0, speed: 3600, damage: 1500, blast: 95, unlockCost: 600, reloadUpgradeCost: 300, reloadStep: 0.1, unstoppable: true, perMatchLimit: 0, color: '#6d6a4f', length: 34, route: 'lofted' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -179,6 +181,25 @@ export const AA: AaDef[] = [
   { id: 5, name: 'THAAD',   roman: 'V',   interceptsTier: 5, costs: [70, 110],baseRadius: 390, baseReload: 5.0, radiusUpgradeCost: 26, radiusStep: 5,  reloadUpgradeCost: 18, reloadStep: 0.05, ammoCost: 26, ammoCap: 40, hp: 650, color: '#ff5470', alsoIntercepts: [6], speedFactor: 2.6 },
 ];
 
+/**
+ * Apex of a lofted shot, in world y. Well above the top of the world, so the
+ * warhead is out of sight for the middle of its flight in either zoom level.
+ */
+export const LOFT_APEX_Y = -1400;
+
+/**
+ * Where along the ground run the apex sits. Well past halfway, so the dive is
+ * far steeper than the climb and the warhead comes down near-vertically —
+ * steeply enough to drop past a neighbouring tower onto the plot beside it.
+ */
+export const LOFT_APEX_SHARE = 0.8;
+
+/**
+ * A lofted shot leaves the pad straight up before tipping over, so it clears
+ * the launching side's own skyline instead of flying through it.
+ */
+export const LOFT_RISE = 360;
+
 export const AA_MAX_PER_TYPE = 2;
 
 /** Whether an anti-air system is allowed to engage a given missile tier. */
@@ -192,6 +213,15 @@ export function canIntercept(def: AaDef, tier: number): boolean {
  * A one-off purchase, unlike the repeatable radius and reload upgrades.
  */
 export const RADAR_INTEL_COST = 1500;
+
+/** How many anti-air systems may share one emplacement. */
+export const AA_STACK_LIMIT = 5;
+
+/**
+ * Drop a battery within this of an existing emplacement and it joins it rather
+ * than standing alone, which keeps a stack tidy enough to draw.
+ */
+export const AA_SITE_SNAP = 44;
 
 /** Interceptor flight speed as a multiple of the incoming missile's speed. */
 export const INTERCEPTOR_SPEED_FACTOR = 1.4;

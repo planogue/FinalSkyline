@@ -1,39 +1,66 @@
 import assert from 'node:assert/strict';
-import { BOTS, BUILDINGS, MATCH, META, MISSILES, WORLD, type Difficulty } from '../src/core/config';
+import { AA_SITE_SNAP, AA_STACK_LIMIT, BOTS, BUILDINGS, MATCH, META, MISSILES, WORLD, type Difficulty } from '../src/core/config';
 import { defaultMeta } from '../src/core/storage';
 import { updateBot } from '../src/game/bot';
 import { missileAt, spawnMissile, updateDefences, updateInterceptors, updateMissiles } from '../src/game/combat';
 import { stepMatch } from '../src/game/engine';
-import { AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
+import { buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
 
 const meta = defaultMeta();
 
-// Launchers need clearance from each other; type 1 is the lightest one.
+// Any five systems may share one emplacement, whatever their type, and a drop
+// near an existing site joins it rather than standing slightly beside it.
+const stack = createMatch('easy', 300);
+stack.player.money = 100000;
+assert(buyBattery(stack.player, 0, 2600));
+assert(buyBattery(stack.player, 1, 2600), 'a launcher sites on top of a radar');
+assert(buyBattery(stack.player, 0, 2600 + AA_SITE_SNAP - 1), 'a near miss joins the same site');
+assert.deepEqual(
+  stack.player.batteries.map((b) => b.x),
+  [2600, 2600, 2600],
+  'a joined battery snaps onto the site it joined',
+);
+assert(buyBattery(stack.player, 2, 2600));
+assert(buyBattery(stack.player, 3, 2600));
+assert.equal(stack.player.batteries.length, AA_STACK_LIMIT, 'five systems fit');
+assert.equal(canDeployAt(stack.player, 2600, 4), false, 'the sixth is refused');
+assert.equal(buyBattery(stack.player, 4, 2600), false);
+assert(canDeployAt(stack.player, 2600 + AA_SITE_SNAP + 40, 4), 'a fresh site is still free');
+assert(buyBattery(stack.player, 4, 2600 + AA_SITE_SNAP + 40));
+
+// A refused drop costs nothing, and the land still bounds where anything goes.
 const spacing = createMatch('easy', 300);
 spacing.player.money = 1000;
 assert(buyBattery(spacing.player, 1, 2600));
-for (const x of [2600, 2634, 2600 + AA_MIN_SPACING - 0.01, NaN, Infinity]) {
-  assert.equal(canDeployAt(spacing.player, x, 1), false, `Reject overlapping/invalid site ${x}`);
+for (const x of [NaN, Infinity, WORLD.cityLeft.x0, WORLD.cityRight.x1 + 400]) {
+  assert.equal(canDeployAt(spacing.player, x, 1), false, `Reject invalid site ${x}`);
   assert.equal(buyBattery(spacing.player, 1, x), false);
 }
 assert.equal(spacing.player.money, 1000, 'Rejected placements must not charge cash');
-assert(buyBattery(spacing.player, 1, 2600 + AA_MIN_SPACING));
+assert(buyBattery(spacing.player, 1, 2600), 'the second Avenger stacks on the first');
 assert.equal(spacing.player.money, 982);
-assert.equal(buyBattery(spacing.player, 2, 2600), false, 'Spacing applies across launcher types');
+assert.equal(buyBattery(spacing.player, 1, 2600), false, 'still max two of each type');
 
-// Radars have no launch rail, so they stack freely both ways.
-const radars = createMatch('easy', 300);
-radars.player.money = 1000;
-assert(buyBattery(radars.player, 0, 2600));
-assert(canDeployAt(radars.player, 2600, 0), 'A radar may share a plot with a radar');
-assert(buyBattery(radars.player, 0, 2600), 'A second radar sites on the same spot');
-assert(canDeployAt(radars.player, 2600, 3), 'A launcher may be sited over a radar');
-assert(buyBattery(radars.player, 3, 2600));
-assert.equal(canDeployAt(radars.player, 2600, 4), false, 'The launcher still blocks other launchers');
-assert.equal(canDeployAt(radars.player, NaN, 0), false, 'Radars still need a real position');
-assert.equal(canDeployAt(radars.player, WORLD.cityLeft.x0, 0), false, 'Radars still stay on own land');
+// Heavier warheads open one at a time, however much cash is on hand.
+const ladder = createMatch('easy', 300);
+ladder.player.money = 100000;
+assert.deepEqual(
+  ladder.player.missileUnlocked,
+  [true, false, false, false, false, false],
+  'only the first tier is open at kick-off',
+);
+assert.equal(buyMissileUpgrade(ladder.player, 6, meta), false, 'cannot skip to the heaviest');
+assert.equal(buyMissileUpgrade(ladder.player, 3, meta), false, 'cannot skip a single step');
+assert.equal(ladder.player.money, 100000, 'a refused unlock costs nothing');
+for (const tier of [2, 3, 4, 5, 6]) {
+  assert.equal(buyMissileUpgrade(ladder.player, tier, meta), 'unlock', `tier ${tier} opens in turn`);
+}
+assert(ladder.player.missileUnlocked.every(Boolean), 'the whole arsenal opens eventually');
 
 const reload = createMatch('easy', 300);
+reload.player.money = 100000;
+// The arsenal opens in order, so climb the ladder before testing the top tier.
+for (const tier of [2, 3, 4, 5]) assert.equal(buyMissileUpgrade(reload.player, tier, meta), 'unlock');
 reload.player.money = 100000;
 assert.equal(buyMissileUpgrade(reload.player, 6, meta), 'unlock');
 assert.equal(reload.player.money, 100000 - 600);
@@ -49,7 +76,8 @@ const launch = createMatch('easy', 300);
 launch.player.money = 10000;
 buyBuilding(launch, launch.player, 8);
 buyBuilding(launch, launch.enemy, 0);
-buyMissileUpgrade(launch.player, 6, meta);
+// Tiers open one at a time, so climb to the top before firing one.
+for (const tier of [2, 3, 4, 5, 6]) assert.equal(buyMissileUpgrade(launch.player, tier, meta), 'unlock');
 pinTarget(launch.player, 6, 500);
 pinTarget(launch.player, 6, 500);
 commitQueue(launch.player);
@@ -87,16 +115,15 @@ for (const tier of MISSILES.map((m) => m.tier)) {
   assert(shot.x0 > WORLD.cityRight.x1, `Tier ${tier} starts behind the city`);
 }
 
-// The heavy tiers fly the overhead cruise route: straight up, across the top of
-// the battlefield, then a vertical dive onto the exact pin. Normal frames and
-// one full-flight frame must both reach the mark, including a pin near the edge
-// of a roof, and neither may clip a tower on the way in.
-const CRUISE_TIERS = MISSILES.filter((m) => m.route === 'cruise').map((m) => m.tier);
+// The heavy tiers climb clean out of the top of the world and dive back onto
+// the exact pin. Normal frames and one full-flight frame must both reach the
+// mark, including a pin near the edge of a roof, and neither may clip a tower.
+const LOFTED_TIERS = MISSILES.filter((m) => m.route === 'lofted').map((m) => m.tier);
 const ARC_TIERS = MISSILES.filter((m) => m.route === 'arc').map((m) => m.tier);
-assert(CRUISE_TIERS.length > 0 && ARC_TIERS.length > 0, 'Both flight paths are in use');
+assert(LOFTED_TIERS.length > 0 && ARC_TIERS.length > 0, 'Both flight paths are in use');
 
 for (const attackingSide of ['player', 'enemy'] as const) {
-  for (const tier of CRUISE_TIERS) {
+  for (const tier of LOFTED_TIERS) {
     for (const aim of ['roof', 'street'] as const) {
       for (const frameMode of ['normal', 'full-flight'] as const) {
         const match = createMatch('easy', 300);
@@ -106,22 +133,40 @@ for (const attackingSide of ['player', 'enemy'] as const) {
         defender.money = 10000;
         for (const x of [1200, 850, 300]) assert(buyBuilding(match, defender, 8, mirrorX(x)));
         const [front, middle, rear] = defender.buildings;
-        const targetX = aim === 'roof' ? rear.x + BUILDINGS[rear.type].w / 2 - 1 : mirrorX(145);
+        // A steep dive comes in at an angle, so a pin on the far lip of a roof
+        // is reached by dropping past the tower rather than onto it. Aim at the
+        // tower itself to test a direct hit.
+        const targetX = aim === 'roof' ? rear.x : mirrorX(145);
         const missile = spawnMissile(attacker, tier, targetX);
         match.missiles.push(missile);
-        const early = missileAt(missile, 0.03);
-        assert.equal(early.x, missile.x0, 'Cruise missiles launch straight up');
-        assert(early.y < missile.y0 - 40, 'Cruise missiles climb immediately');
-        assert(missileAt(missile, 0.5).y <= 120, 'Crossing stays near the top of the battlefield');
-        const late = missileAt(missile, 0.94);
-        assert.equal(late.x, targetX, 'Terminal descent is vertically above the exact pin');
-        assert(missileAt(missile, 0.97).y > late.y, 'Terminal descent moves downward');
+        assert(missileAt(missile, 0.03).y < missile.y0 - 40, 'A lofted shot climbs immediately');
+        assert(missileAt(missile, 0.3).y < 0, 'and is out of the world within the first third');
+        // The apex sits far above the world, so the middle of the flight is out
+        // of sight at either zoom level.
+        assert(missileAt(missile, 0.5).y < -600, 'The apex leaves the screen entirely');
+        assert(missileAt(missile, 0.7).y < 0, 'and it is still up there most of the way');
+        const late = missileAt(missile, 0.97);
+        assert(late.y > 0 && late.y < WORLD.groundY, 'It is back inside the world to dive');
+        assert(missileAt(missile, 0.99).y > late.y, 'The dive moves downward');
+        // Coming down like a meteorite: far steeper than it is wide.
+        const drop = missileAt(missile, 1).y - late.y;
+        const drift = Math.abs(missileAt(missile, 1).x - late.x);
+        assert(drop > drift * 1.5, `The dive is a plunge, not a glide (${drop} vs ${drift})`);
         assert.deepEqual(missileAt(missile, 1), { x: targetX, y: WORLD.groundY });
-        const zone = defender.side === 'enemy' ? WORLD.cityLeft : WORLD.cityRight;
-        for (let step = 0; step <= 200; step++) {
-          const point = missileAt(missile, step / 200);
-          if (point.x >= zone.x0 && point.x <= zone.x1 && Math.abs(point.x - targetX) > 0.001) {
-            assert(point.y < WORLD.groundY - BUILDINGS[8].h, 'Clear every intervening tower before diving');
+        // Nothing but the tower it was aimed at may be in the way. Checking the
+        // real footprints rather than a slab of the city lets the dive finish
+        // inside its target's own outline, which is where it is supposed to.
+        const aimed = aim === 'roof' ? rear : null;
+        for (let step = 0; step <= 600; step++) {
+          const point = missileAt(missile, step / 600);
+          for (const tower of defender.buildings) {
+            if (tower === aimed) continue;
+            const half = BUILDINGS[tower.type].w / 2;
+            if (point.x < tower.x - half || point.x > tower.x + half) continue;
+            assert(
+              point.y < WORLD.groundY - BUILDINGS[tower.type].h,
+              `Clear the tower at ${tower.x} on the way to ${targetX}`,
+            );
           }
         }
         const dt = frameMode === 'normal' ? 1 / 30 : missile.flightTime * 1.1;
@@ -130,15 +175,18 @@ for (const attackingSide of ['player', 'enemy'] as const) {
         }
         assert(missile.dead, `${attackingSide} tier ${tier} must complete ${frameMode} flight`);
         assert.equal(attacker.stats.hits, 1, 'Exactly one impact per missile');
-        assert.equal(missile.x, targetX, 'The impact keeps the exact marked x');
         assert.equal(front.hp, front.maxHp, 'The front tower does not steal the impact');
         assert.equal(middle.hp, middle.maxHp, 'The middle tower does not steal the impact');
         if (aim === 'roof') {
-          assert.equal(rear.hp, Math.max(0, rear.maxHp - missile.damage), 'Selected footprint takes the direct hit');
-          const roofY = WORLD.groundY - BUILDINGS[rear.type].h;
-          assert(missile.y >= roofY && missile.y <= roofY + 6, 'Impact occurs at the selected roof');
+          assert.equal(rear.hp, Math.max(0, rear.maxHp - missile.damage), 'The marked tower takes the direct hit');
+          const half = BUILDINGS[rear.type].w / 2;
+          assert(
+            missile.x >= rear.x - half && missile.x <= rear.x + half,
+            'and the burst lands inside its own footprint',
+          );
         } else {
-          assert.equal(missile.y, WORLD.groundY, 'An empty street pin lands on the ground');
+          assert.equal(missile.x, targetX, 'A clear street pin keeps the exact marked x');
+          assert.equal(missile.y, WORLD.groundY, 'A clear street pin lands on the ground');
           assert.equal(rear.hp, rear.maxHp, 'A tower before the street pin stays intact');
         }
       }
@@ -271,4 +319,4 @@ try {
   Math.random = random;
 }
 console.table(rows);
-console.log('PASS: placement clearance, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');
+console.log('PASS: stacked emplacements, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');

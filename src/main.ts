@@ -1,5 +1,5 @@
 import './style.css';
-import { AA, MATCH, MISSILES, WORLD } from './core/config';
+import { AA, AA_STACK_LIMIT, MATCH, MISSILES, WORLD } from './core/config';
 import { audio } from './core/audio';
 import { defaultMeta, loadMeta, saveMeta } from './core/storage';
 import type { PanelId } from './core/types';
@@ -236,6 +236,21 @@ let dragging = false;
 let dragMoved = 0;
 let lastX = 0;
 
+/**
+ * Where the target cursor was last put, and by what. Aiming with T and the
+ * arrow keys used to be thrown away the moment the pointer wandered off the
+ * canvas — on the way to the Fight button, say — because the hover cursor and
+ * the keyboard cursor were the same field. The pointer may only clear its own.
+ */
+let aimSource: 'pointer' | 'keyboard' = 'pointer';
+let lastAimX = ENEMY_VIEW_X;
+
+function setAim(x: number, source: 'pointer' | 'keyboard'): void {
+  aimSource = source;
+  ui.aimX = x;
+  lastAimX = x;
+}
+
 function aimable(): boolean {
   return (
     host.screen === 'game' &&
@@ -264,7 +279,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
 canvas.addEventListener('pointermove', (e) => {
   if (placing()) ui.placeX = camera.toWorldX(e.clientX);
-  if (aimable()) ui.aimX = clampTargetX(camera.toWorldX(e.clientX));
+  if (aimable()) setAim(clampTargetX(camera.toWorldX(e.clientX)), 'pointer');
   if (!dragging) return;
   const dx = e.clientX - lastX;
   lastX = e.clientX;
@@ -283,7 +298,8 @@ canvas.addEventListener('pointercancel', () => {
 });
 
 canvas.addEventListener('pointerleave', () => {
-  ui.aimX = null;
+  // Only the hover cursor goes; a mark placed with the keyboard stays put.
+  if (aimSource === 'pointer') ui.aimX = null;
 });
 
 canvas.addEventListener(
@@ -331,7 +347,9 @@ function handleWorldAction(worldX: number): void {
         audio.deny();
         const zone = deployZone('player');
         gameUI.toast(
-          worldX < zone.x0 || worldX > zone.x1 ? 'That is not your land' : 'Too close to another battery',
+          worldX < zone.x0 || worldX > zone.x1
+            ? 'That is not your land'
+            : `That emplacement is full — ${AA_STACK_LIMIT} systems is the limit`,
         );
         return;
       }
@@ -352,6 +370,7 @@ function handleWorldAction(worldX: number): void {
   const shot = pinTarget(match.player, ui.selectedTier, clampTargetX(worldX));
   if (shot) {
     host.sendOnlineAction({ type: 'pin-target', tier: ui.selectedTier, x: shot.x });
+    lastAimX = shot.x;
     audio.pin();
     return;
   }
@@ -428,16 +447,17 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     host.setPanel(panel);
     if (panel === 'icbm') {
-      ui.aimX = ENEMY_VIEW_X;
-      focusCursor(ui.aimX);
+      setAim(clampTargetX(lastAimX), 'keyboard');
+      focusCursor(lastAimX);
     }
     return;
   }
   if (key === 't') {
     e.preventDefault();
     if (ui.panel !== 'icbm') host.setPanel('icbm');
-    ui.aimX ??= ENEMY_VIEW_X;
-    focusCursor(ui.aimX);
+    setAim(clampTargetX(ui.aimX ?? lastAimX), 'keyboard');
+    focusCursor(ui.aimX!);
+    // Enter must pin the target, not re-press whatever card was last clicked.
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     return;
   }
@@ -451,8 +471,8 @@ window.addEventListener('keydown', (e) => {
       ui.placeX = buildCursor;
       focusCursor(buildCursor);
     } else if (aimable()) {
-      ui.aimX = clampTargetX((ui.aimX ?? ENEMY_VIEW_X) + direction * step);
-      focusCursor(ui.aimX);
+      setAim(clampTargetX((ui.aimX ?? lastAimX) + direction * step), 'keyboard');
+      focusCursor(ui.aimX!);
     } else {
       camera.panBy(-direction * step * camera.scale);
     }
@@ -465,7 +485,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (key === 'enter' && (placing() || aimable())) {
     e.preventDefault();
-    handleWorldAction(ui.placing ? (ui.placeX ?? buildCursor) : (ui.aimX ?? ENEMY_VIEW_X));
+    handleWorldAction(ui.placing ? (ui.placeX ?? buildCursor) : (ui.aimX ?? lastAimX));
     return;
   }
   if (key === ' ' || key === 'f') {
@@ -570,6 +590,31 @@ const debug = {
    */
   online() {
     return online;
+  },
+  /**
+   * Audition the combat sounds without waiting for a battle:
+   * `__finalSkyline.testSound('launch', 6)`
+   */
+  testSound(which: 'launch' | 'interceptorLaunch' | 'intercept', tier = 1, pan = 0) {
+    audio.init();
+    if (which === 'launch') audio.launch(tier, pan);
+    else if (which === 'interceptorLaunch') audio.interceptorLaunch(pan);
+    else audio.intercept(pan);
+    return which;
+  },
+  /** Top up the war chest, for playtesting the late-tier weapons. */
+  grant(amount = 5000) {
+    const m = host.match;
+    if (!m) return null;
+    m.player.money += amount;
+    return Math.round(m.player.money);
+  },
+  /** Jump the clock past the opening ceasefire, for playtesting the shooting. */
+  skipCeasefire() {
+    const m = host.match;
+    if (!m) return null;
+    m.time = Math.max(m.time, MATCH.peaceSeconds + 0.5);
+    return Math.round(m.time);
   },
   missileTable() {
     return MISSILES.map((d) => ({ tier: d.roman, cost: d.cost, speed: d.speed, dmg: d.damage, reload: d.reload }));

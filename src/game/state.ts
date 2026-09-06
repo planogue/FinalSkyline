@@ -1,6 +1,8 @@
 import {
   AA,
   AA_MAX_PER_TYPE,
+  AA_SITE_SNAP,
+  AA_STACK_LIMIT,
   BUILDINGS,
   BOTS,
   BOT_NAMES,
@@ -333,31 +335,52 @@ export function deployZone(side: Side): { x0: number; x1: number } {
 const AA_DEPLOY_MARGIN = 150;
 
 /**
- * A radar has no launch rail to keep clear, so it shares a plot with whatever
- * is already there: you can site one over a launcher, and a launcher over one.
- * Launchers still need room from each other.
+ * Batteries share an emplacement rather than needing room of their own: drop
+ * one near an existing site and it joins that site, stacked up to
+ * AA_STACK_LIMIT deep. A tight cluster of layered systems is a real thing to
+ * want, and the renderer fans a shared site out so nothing hides behind
+ * anything else.
  */
-export function canDeployAt(state: SideState, x: number, type?: number): boolean {
+export function deploySiteX(state: SideState, x: number): number {
+  let best: number | null = null;
+  let bestGap = AA_SITE_SNAP;
+  for (const b of state.batteries) {
+    const gap = Math.abs(b.x - x);
+    if (gap <= bestGap) {
+      bestGap = gap;
+      best = b.x;
+    }
+  }
+  return best ?? x;
+}
+
+/** How many systems already stand on the emplacement nearest to x. */
+export function stackedAt(state: SideState, x: number): number {
+  const site = deploySiteX(state, x);
+  return state.batteries.filter((b) => b.x === site).length;
+}
+
+export function canDeployAt(state: SideState, x: number, _type?: number): boolean {
   const zone = deployZone(state.side);
   if (!Number.isFinite(x) || x < zone.x0 || x > zone.x1) return false;
-  if (type !== undefined && isRadar(type)) return true;
-  return state.batteries.every((b) => isRadar(b.type) || Math.abs(b.x - x) >= AA_MIN_SPACING);
+  return stackedAt(state, x) < AA_STACK_LIMIT;
 }
 
-function isRadar(type: number): boolean {
-  return AA[type].interceptsTier === 0;
-}
-
-// Rendered systems are scaled 1.4x; leave clearance for the chassis and turret.
+/**
+ * Nothing forbids a tighter cluster any more, but a side placing batteries for
+ * itself still spreads them out by this much — scattering cover across the
+ * city beats piling it all onto one plot.
+ */
 export const AA_MIN_SPACING = 56;
 
 /** Places a battery at x. Pass no x for a random spot in the side's own land. */
 export function buyBattery(state: SideState, type: number, x?: number): boolean {
   const cost = aaCost(state, type);
   if (!isFinite(cost) || state.money < cost) return false;
-  const at = x === undefined ? randomDeploySpot(state, type) : x;
-  if (at === null) return false;
-  if (!canDeployAt(state, at, type)) return false;
+  const dropped = x === undefined ? randomDeploySpot(state, type) : x;
+  if (dropped === null) return false;
+  if (!canDeployAt(state, dropped, type)) return false;
+  const at = deploySiteX(state, dropped);
   state.money -= cost;
   state.stats.spent += cost;
   state.aaOwned[type]++;
@@ -392,7 +415,7 @@ export function bestDeploySpot(state: SideState, type: number, radius: number): 
   const steps = 48;
   for (let i = 0; i <= steps; i++) {
     const x = zone.x0 + ((zone.x1 - zone.x0) * i) / steps;
-    if (!canDeployAt(state, x, type)) continue;
+    if (!canDeployAt(state, x, type) || !spreadOut(state, x)) continue;
     let score = 0;
     for (const b of alive) {
       const d = Math.abs(b.x - x);
@@ -413,11 +436,20 @@ export function bestDeploySpot(state: SideState, type: number, radius: number): 
 
 function randomDeploySpot(state: SideState, type: number): number | null {
   const zone = deployZone(state.side);
+  // Prefer somewhere clear; fall back to sharing a site once the land is full.
+  for (let i = 0; i < 60; i++) {
+    const x = zone.x0 + Math.random() * (zone.x1 - zone.x0);
+    if (spreadOut(state, x) && canDeployAt(state, x, type)) return x;
+  }
   for (let i = 0; i < 60; i++) {
     const x = zone.x0 + Math.random() * (zone.x1 - zone.x0);
     if (canDeployAt(state, x, type)) return x;
   }
   return null;
+}
+
+function spreadOut(state: SideState, x: number): boolean {
+  return state.batteries.every((b) => Math.abs(b.x - x) >= AA_MIN_SPACING);
 }
 
 /** Called when a battery is blown up: it frees its slot so it can be replaced. */
@@ -470,11 +502,26 @@ export function buyAaReload(state: SideState, type: number, meta: MetaSave): boo
   return true;
 }
 
+/**
+ * The tier that has to be unlocked before this one, or null for the first.
+ * The arsenal opens up a step at a time rather than letting a saved-up player
+ * skip straight to the heaviest warhead.
+ */
+export function unlockPrerequisite(tier: number): number | null {
+  return tier <= 1 ? null : tier - 1;
+}
+
+export function canUnlockMissile(state: SideState, tier: number): boolean {
+  const previous = unlockPrerequisite(tier);
+  return previous === null || state.missileUnlocked[previous - 1];
+}
+
 /** Unlocks the tier if locked, otherwise buys a reload reduction. */
 export function buyMissileUpgrade(state: SideState, tier: number, meta: MetaSave): 'unlock' | 'reload' | false {
   const i = tier - 1;
   const def = MISSILES[i];
   if (!state.missileUnlocked[i]) {
+    if (!canUnlockMissile(state, tier)) return false;
     if (state.money < def.unlockCost) return false;
     state.money -= def.unlockCost;
     state.stats.spent += def.unlockCost;
