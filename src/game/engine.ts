@@ -120,21 +120,71 @@ function checkEnd(match: Match, dt: number, meta: MetaSave): void {
   const pv = cityValue(match.player);
   const ev = cityValue(match.enemy);
 
-  if (match.player.wipeoutTimer >= MATCH.wipeoutGraceSeconds) return finish(match, false, pv, ev, 'Your city was levelled', meta);
-  if (match.enemy.wipeoutTimer >= MATCH.wipeoutGraceSeconds) return finish(match, true, pv, ev, `${match.enemy.name}'s city was levelled`, meta);
+  /**
+   * Online, each browser runs the whole battle, so this side's copy of the
+   * opponent's city is only ever an approximation of theirs. A defeat is
+   * something this client can be sure of and announces at once; a victory is
+   * something only the other player can grant, so it waits to be told. Without
+   * that rule one player ends up on a victory screen while the other is still
+   * playing — and, in a timed match, both can claim the win at once.
+   *
+   * `waited` is how long this side has been sure, so a browser that was closed
+   * mid-match cannot strand the winner in a match nobody can end.
+   */
+  const settle = (won: boolean, waited: number, reason: string): void => {
+    if (won && match.mode === 'online' && waited < MATCH.opponentSilenceSeconds) return;
+    finish(match, won, pv, ev, reason, meta);
+  };
+
+  if (match.player.wipeoutTimer >= MATCH.wipeoutGraceSeconds) {
+    return settle(false, 0, 'Your city was levelled');
+  }
+  if (match.enemy.wipeoutTimer >= MATCH.wipeoutGraceSeconds) {
+    return settle(
+      true,
+      match.enemy.wipeoutTimer - MATCH.wipeoutGraceSeconds,
+      `${match.enemy.name}'s city was levelled`,
+    );
+  }
   if (isFinite(match.duration) && match.time >= match.duration) {
     const mine = match.player.stats.valueDestroyed;
     const theirs = match.enemy.stats.valueDestroyed;
     const won = mine !== theirs ? mine > theirs : pv > ev;
-    return finish(
-      match,
+    return settle(
       won,
-      pv,
-      ev,
+      match.time - match.duration,
       won ? 'You did the most damage' : 'They did the most damage',
-      meta,
     );
   }
+}
+
+/**
+ * End the match because the opponent's client said so. Their word is taken for
+ * it: they are the only one who can be sure their own city fell, or that they
+ * walked away.
+ */
+export function concludeFromOpponent(
+  match: Match,
+  won: boolean,
+  cause: 'wipeout' | 'time' | 'resign',
+  meta: MetaSave,
+): boolean {
+  if (match.phase === 'over' || match.result) return false;
+  const pv = cityValue(match.player);
+  const ev = cityValue(match.enemy);
+  const reason =
+    cause === 'resign'
+      ? `${match.enemy.name} left the match`
+      : cause === 'time'
+        ? won
+          ? 'You did the most damage'
+          : 'They did the most damage'
+        : won
+          ? `${match.enemy.name}'s city was levelled`
+          : 'Your city was levelled';
+  finish(match, won, pv, ev, reason, meta);
+  match.result!.fromOpponent = true;
+  return true;
 }
 
 function finish(match: Match, won: boolean, pv: number, ev: number, reason: string, meta: MetaSave): void {

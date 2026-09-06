@@ -1,5 +1,6 @@
 import { WORLD } from '../core/config';
 import type { MetaSave } from '../core/types';
+import { concludeFromOpponent } from '../game/engine';
 import {
   buyAaRadius,
   buyAaReload,
@@ -26,7 +27,17 @@ export type OnlineAction =
   | { type: 'pin-target'; tier: number; x: number }
   | { type: 'unpin-target'; tier?: number }
   | { type: 'clear-targets' }
-  | { type: 'commit-targets' };
+  | { type: 'commit-targets' }
+  /**
+   * The sender's match has ended. `won` is from the sender's point of view, so
+   * the receiver takes the other half of it. Sent by whoever reaches the end
+   * first; a wipeout is only ever announced by the side that was wiped out.
+   */
+  | { type: 'match-over'; won: boolean; cause: MatchOverCause };
+
+export type MatchOverCause = 'wipeout' | 'time' | 'resign';
+
+const MATCH_OVER_CAUSES: MatchOverCause[] = ['wipeout', 'time', 'resign'];
 
 const intBetween = (value: unknown, min: number, max: number): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
@@ -65,6 +76,10 @@ export function parseOnlineAction(value: unknown): OnlineAction | null {
     case 'unpin-target':
       return action.tier === undefined || intBetween(action.tier, 1, 6)
         ? { type: action.type, ...(action.tier === undefined ? {} : { tier: action.tier }) }
+        : null;
+    case 'match-over':
+      return typeof action.won === 'boolean' && MATCH_OVER_CAUSES.includes(action.cause as MatchOverCause)
+        ? { type: action.type, won: action.won, cause: action.cause as MatchOverCause }
         : null;
     case 'radar-intel':
     case 'clear-targets':
@@ -105,5 +120,8 @@ export function applyRemoteAction(match: Match, meta: MetaSave, action: OnlineAc
       return true;
     case 'commit-targets':
       return commitQueue(enemy) > 0;
+    // Mirrored like everything else: their win is our loss.
+    case 'match-over':
+      return concludeFromOpponent(match, !action.won, action.cause, meta);
   }
 }

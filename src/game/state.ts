@@ -60,6 +60,8 @@ export interface Match {
     playerValue: number;
     enemyValue: number;
     reason: string;
+    /** Set when the opponent's client called it, so we do not echo it back. */
+    fromOpponent?: boolean;
   };
   /** Set once the peace-timer siren has played. */
   peaceAnnounced: boolean;

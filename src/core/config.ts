@@ -35,6 +35,15 @@ export const MATCH = {
   wipeoutGraceSeconds: 6,
   /** Length of one day/night cycle in an unlimited match. */
   unlimitedCycleSeconds: 480,
+  /**
+   * Online only. A win by wipeout is announced by the side that was wiped out,
+   * because each browser runs its own copy of the fight and only really knows
+   * what happened to its own city. This is how long the other player waits for
+   * that word before claiming the win anyway — long enough to cover a slow
+   * connection, short enough that a browser closed mid-match does not strand
+   * the winner in a match nobody can end.
+   */
+  opponentSilenceSeconds: 15,
 };
 
 /**

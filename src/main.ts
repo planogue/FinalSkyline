@@ -142,6 +142,10 @@ const host: UiHost = {
     if (host.match?.mode === 'online') {
       if (host.match.phase !== 'over' && !onlineResultReported) {
         onlineResultReported = true;
+        // Walking out mid-match is a result for the other player too. Tell them
+        // before reporting, or they are left fighting a city that has stopped
+        // shooting back and never finishing.
+        host.sendOnlineAction({ type: 'match-over', won: false, cause: 'resign' });
         meta.losses++;
         meta.stars += 1;
         saveMeta(meta);
@@ -674,6 +678,16 @@ function frame(now: number): void {
       if (match.mode === 'online') {
         if (!onlineResultReported) {
           onlineResultReported = true;
+          // Both browsers run the whole battle, so neither can assume the other
+          // reached the same conclusion at the same moment. Say so out loud.
+          // A ruling that arrived from the opponent needs no echo.
+          if (!match.result.fromOpponent) {
+            host.sendOnlineAction({
+              type: 'match-over',
+              won: match.result.won,
+              cause: isFinite(match.duration) && match.time >= match.duration ? 'time' : 'wipeout',
+            });
+          }
           meta.stars += match.result.stars;
           if (match.result.won) meta.wins++;
           else meta.losses++;

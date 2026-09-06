@@ -239,6 +239,31 @@ None of these tables are readable directly: a player has no select rights on
 Everything goes through security-definer RPCs that return only a username and an
 online flag.
 
+### Ending a match
+
+Both browsers run the whole battle, so each one's copy of the *opponent's* city is only
+ever an approximation of theirs — two clients at different frame rates will not always
+agree about which interceptions landed. That means neither may decide the match on its
+own reading of the other side's ruins.
+
+The rule is that **a client announces its own defeat and waits to be told about a
+victory**:
+
+- Wiped out, out of time and behind on damage, or walking away — the losing side calls
+  it immediately and sends a `match-over` command over the same realtime channel as
+  every other action. The other player ends on that word, mirrored.
+- A win is never declared off this side's own copy of the opponent's city. It waits
+  `MATCH.opponentSilenceSeconds` for the concession, then claims anyway — otherwise a
+  browser closed mid-match would strand the winner in a match nobody can end.
+
+Before this, each browser simply ended when its own simulation said so and told nobody,
+which is how one player could sit on a victory screen while the other was still playing.
+
+The two simulations can still drift, so a beaten player may be told they lost while their
+own screen shows a city that looks intact. Ending together on one ruling is the fix for
+the visible bug; making the two simulations agree in the first place needs a
+server-authoritative match, which is the note in **Current limitations** below.
+
 A profile row tied to the Auth user stores the public username, wins, losses, stars, and
 permanent upgrade levels. Queueing matches players who chose the same length — 5, 10 or
 15 minutes, or unlimited, which the database stores as a duration of 0. During a match
@@ -329,8 +354,13 @@ Pushing a commit to `main` starts a production deployment through the Git integr
 ## Current limitations
 
 - Online simulation is client-authoritative beta networking. RLS prevents one player
-  from entering another match, but a future competitive/ranked mode should move economy
-  and result authority to a trusted server.
+  from entering another match, and the two clients now end together on a single ruling,
+  but they each run their own copy of the battle and those copies drift. A competitive or
+  ranked mode wants economy, combat and result authority on a trusted server.
+- If both clients somehow conclude they won — the damage totals they each tallied
+  disagreeing in just the wrong direction at the final whistle — neither concedes and
+  both claim after the silence window. Rare, and the loser of the two is no longer left
+  playing on, but it is the same divergence problem underneath.
 - Per-launcher ammunition: rounds are a per-type pool shared by both batteries of a tier.
 - Moving or selling a battery once it is sited.
 - Taming the medium/hard overlap described above.
