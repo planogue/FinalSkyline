@@ -89,7 +89,6 @@ export interface UiHost {
   cancelOnlineQueue(): Promise<void>;
   signUp(username: string, email: string, password: string): Promise<void>;
   signIn(email: string, password: string): Promise<void>;
-  signInAsGuest(): Promise<void>;
   signOut(): Promise<void>;
   addFriend(username: string): Promise<void>;
   respondFriend(userId: string, accept: boolean): Promise<void>;
@@ -1071,15 +1070,6 @@ export class GameUI {
       });
       row.append(signUp, signIn);
       card.appendChild(row);
-
-      // Still one click in for anyone who does not want an account at all.
-      const guestRow = el('div', 'online-actions');
-      const guest = el('button', 'btn ghost', 'Play as guest');
-      guest.disabled = busy;
-      guest.title = 'Play online straight away — progress stays on this device';
-      guest.addEventListener('click', () => submit(() => this.host.signInAsGuest()));
-      guestRow.appendChild(guest);
-      card.appendChild(guestRow);
     } else {
       const profile = el('div', 'online-profile');
       const name = el('strong');

@@ -213,12 +213,9 @@ Tuning the game means editing `src/core/config.ts` and re-running `npm run sim`.
 
 ## Online play
 
-Two ways in:
-
-1. **Email, password and username.** Creating an account signs you straight in — there
-   is no "check your inbox" step to sit through.
-2. **Play as guest** — a Supabase anonymous account, for anyone who does not want one.
-   The profile is named `guest_<id>` and progression stays on that browser.
+One way in: **an email, a password and a username.** Creating an account signs you
+straight in — there is no "check your inbox" step to sit through, provided the project
+is set up as below.
 
 ### Friends and invitations
 
@@ -258,16 +255,13 @@ npx supabase db reset
 npm run dev
 ```
 
-### Project settings the migrations cannot set for you
+### The one project setting the migrations cannot make for you
 
-Both live in the Supabase dashboard, under **Authentication → Sign In / Providers**:
+In the Supabase dashboard, under **Authentication → Sign In / Providers**:
 
 - **Confirm email: off.** With it left on, sign-up falls back to signing in with the
   credentials just entered, which works unless the project also blocks unconfirmed
   sign-ins — in which case the card says so rather than failing silently.
-- **Anonymous sign-ins: on** — otherwise *Play as guest* reports that guest play is not
-  enabled. Leave it off if you would rather everyone had an account; nothing else
-  depends on it.
 
 Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in Vercel for Production,
 Preview, and Development. These are browser-safe project identifiers; never expose the
@@ -278,8 +272,8 @@ The migrations in `supabase/migrations/` create the account profile, queue, matc
 results, RLS policies, RPC functions, and Realtime publication. They also expose the
 locked-down `api` schema to PostgREST; only the explicitly granted matchmaking/result
 functions are callable by authenticated players. Later migrations add the unlimited queue
-bucket, teach the profile trigger to name guest accounts (which arrive without a username
-of their own), and add friends, presence and invitations.
+bucket, give the profile trigger a fallback for accounts that arrive without a username
+of their own, and add friends, presence and invitations.
 
 If you are applying these by hand in the Supabase SQL editor rather than through the CLI,
 run the files in filename order — they build on each other.

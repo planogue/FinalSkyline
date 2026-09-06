@@ -185,26 +185,10 @@ export class OnlineService {
     this.set({
       phase: 'signed-out',
       message:
-        'Account made, but this project still requires email confirmation. ' +
-        'Turn "Confirm email" off in Supabase Auth, or play as a guest.',
+        'Account made, but this project still asks for email confirmation. ' +
+        'Confirm it from your inbox, then sign in — or turn "Confirm email" off ' +
+        'in Supabase Auth to skip the step.',
     });
-  }
-
-  /** A throwaway account: play online with no credentials at all. */
-  async signInAsGuest(): Promise<void> {
-    if (!this.client) return;
-    this.set({ phase: 'loading', message: 'Setting up a guest commander…' });
-    const { data, error } = await this.client.auth.signInAnonymously();
-    if (error) {
-      this.set({
-        phase: 'signed-out',
-        message: /anonymous.*disabled|not enabled/i.test(error.message)
-          ? 'Guest play is not enabled on this project yet'
-          : error.message,
-      });
-      return;
-    }
-    await this.handleUser(data.user);
   }
 
   async signIn(email: string, password: string): Promise<void> {

@@ -109,9 +109,6 @@ const host: UiHost = {
   async signIn(email: string, password: string) {
     await onlineService.signIn(email, password);
   },
-  async signInAsGuest() {
-    await onlineService.signInAsGuest();
-  },
   async addFriend(username: string) {
     await onlineService.addFriend(username);
   },
@@ -315,9 +312,19 @@ function handleTap(clientX: number): void {
   handleWorldAction(camera.toWorldX(clientX));
 }
 
-function handleWorldAction(worldX: number): void {
+/**
+ * @param quiet suppresses the refusal sound and toast. Set while a held Enter
+ *              is repeating: the first refusal is worth hearing, the twentieth
+ *              in the same second is not.
+ */
+function handleWorldAction(worldX: number, quiet = false): void {
   const match = host.match;
   if (!match) return;
+  const refuse = (message: string): void => {
+    if (quiet) return;
+    audio.deny();
+    gameUI.toast(message);
+  };
 
   // Siting a new anti-air battery on your own land.
   if (placing() && ui.placing !== null) {
@@ -328,8 +335,7 @@ function handleWorldAction(worldX: number): void {
     if (placement.kind === 'building') {
       const slot = buildingPlacementAt(match.player, placement.type, worldX);
       if (!slot) {
-        audio.deny();
-        gameUI.toast('Choose a free plot on your land');
+        refuse('Choose a free plot on your land');
         return;
       }
       if (buyBuilding(match, match.player, placement.type, slot.x)) {
@@ -338,15 +344,13 @@ function handleWorldAction(worldX: number): void {
         ui.placing = null;
         ui.placeX = null;
       } else {
-        audio.deny();
-        gameUI.toast('Not enough cash or build limit reached');
+        refuse('Not enough cash or build limit reached');
       }
     } else {
       const type = placement.type;
       if (!canDeployAt(match.player, worldX, type)) {
-        audio.deny();
         const zone = deployZone('player');
-        gameUI.toast(
+        refuse(
           worldX < zone.x0 || worldX > zone.x1
             ? 'That is not your land'
             : `That emplacement is full — ${AA_STACK_LIMIT} systems is the limit`,
@@ -359,8 +363,7 @@ function handleWorldAction(worldX: number): void {
         ui.placing = null;
         ui.placeX = null;
       } else {
-        audio.deny();
-        gameUI.toast('Not enough cash');
+        refuse('Not enough cash');
       }
     }
     return;
@@ -375,15 +378,29 @@ function handleWorldAction(worldX: number): void {
     return;
   }
   // Say exactly which of the three reasons stopped the shot.
-  audio.deny();
   const def = MISSILES[ui.selectedTier - 1];
   if (!match.player.missileUnlocked[ui.selectedTier - 1]) {
-    gameUI.toast(`${def.name} is locked — unlock it in Upgrades ($${def.unlockCost})`);
+    refuse(`${def.name} is locked — unlock it in Upgrades ($${def.unlockCost})`);
   } else if (shotsRemaining(match.player, ui.selectedTier) <= 0) {
-    gameUI.toast(`No ${def.name} rounds left this match`);
+    refuse(`No ${def.name} rounds left this match`);
   } else {
-    gameUI.toast(`${def.name} costs $${def.cost} — you have $${Math.floor(match.player.money)}`);
+    refuse(`${def.name} costs $${def.cost} — you have $${Math.floor(match.player.money)}`);
   }
+}
+
+/**
+ * Holding Enter keeps dropping marks. The browser's auto-repeat fires far
+ * faster than anyone means to spend money, so repeats are paced; a fresh press
+ * always goes straight through.
+ */
+const MARK_REPEAT_MS = 110;
+let lastRepeatMark = 0;
+
+function repeatMarkReady(): boolean {
+  const now = performance.now();
+  if (now - lastRepeatMark < MARK_REPEAT_MS) return false;
+  lastRepeatMark = now;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,8 +430,10 @@ window.addEventListener('keydown', (e) => {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey ||
     (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select')))) return;
   const key = e.key.toLowerCase();
-  if (e.repeat && !key.startsWith('arrow')) {
-    // Never spend cash or launch repeatedly because a key is held down.
+  // Never spend cash or launch repeatedly because a key is held down — except
+  // Enter while aiming, where holding it down to walk a line of marks across a
+  // city is the whole point. That path is paced below.
+  if (e.repeat && !key.startsWith('arrow') && !(key === 'enter' && aimable())) {
     if (key !== 'tab') e.preventDefault();
     return;
   }
@@ -441,7 +460,11 @@ window.addEventListener('keydown', (e) => {
   if (host.screen !== 'game' || !match || match.phase !== 'playing') return;
   // Upgrades are a keyboard-navigable modal; battlefield actions stay blocked.
   if (ui.panel === 'upgrades') return;
-  if (key === 'enter' && document.activeElement?.matches('button, summary')) return;
+  // A focused button normally keeps Enter for itself, which is right in a menu.
+  // On the battlefield it meant that picking a missile with the mouse left the
+  // card holding Enter, so the next press re-selected the card instead of
+  // marking a target. While there is a cursor on the map, Enter is the map's.
+  if (key === 'enter' && document.activeElement?.matches('button, summary') && !placing() && !aimable()) return;
   const panel = (Object.entries(PANEL_KEYS) as [PanelId, string][]).find(([, value]) => value === key)?.[0];
   if (panel) {
     e.preventDefault();
@@ -485,7 +508,9 @@ window.addEventListener('keydown', (e) => {
   }
   if (key === 'enter' && (placing() || aimable())) {
     e.preventDefault();
-    handleWorldAction(ui.placing ? (ui.placeX ?? buildCursor) : (ui.aimX ?? lastAimX));
+    if (e.repeat && !repeatMarkReady()) return;
+    lastRepeatMark = performance.now();
+    handleWorldAction(ui.placing ? (ui.placeX ?? buildCursor) : (ui.aimX ?? lastAimX), e.repeat);
     return;
   }
   if (key === ' ' || key === 'f') {
