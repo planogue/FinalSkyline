@@ -1,3 +1,4 @@
+import { playerLevel } from '../src/core/level';
 import assert from 'node:assert/strict';
 import { AA, BOTS, BUILDINGS, MATCH, META, MISSILES, WORLD, type Difficulty } from '../src/core/config';
 import { defaultMeta } from '../src/core/storage';
@@ -421,3 +422,10 @@ assert(buyBuilding(arrival,arrival.enemy,0,800));
 updateBarrage(arrival,arrival.player,4);
 assert(Math.abs(arrival.missiles[0].tx-arrival.enemy.buildings[0].x)<BUILDINGS[0].w/2,'New building chosen after truck arrival');
 console.log('PASS: immediate deployment, half-second firing, arrival targeting, empty sweep and animated departure');
+
+const rank=defaultMeta();assert.equal(playerLevel(rank),20);
+rank.wins=10;assert.equal(playerLevel(rank),25);
+rank.losses=10;assert.equal(playerLevel(rank),20);
+rank.radiusLevel[0]=6;assert.equal(playerLevel(rank),22);
+rank.losses=100;assert(playerLevel(rank)>=1);
+console.log('PASS: smoothed win rate and permanent upgrades determine level');

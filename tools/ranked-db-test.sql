@@ -1,0 +1,35 @@
+begin;
+do $$
+declare a uuid:=gen_random_uuid(); b uuid:=gen_random_uuid(); t jsonb; again jsonb; n integer;
+begin
+ if exists(select 1 from public.matchmaking_queue where last_seen>=now()-interval '20 seconds') then raise exception 'Test requires an idle queue'; end if;
+ insert into auth.users(id,raw_user_meta_data) values(a,jsonb_build_object('username','qa_'||left(a::text,8))),(b,jsonb_build_object('username','qa_'||left(b::text,8)));
+ select private.match_level(p) into n from public.profiles p where user_id=a;
+ if n<>20 then raise exception 'Starter level mismatch'; end if;
+ update public.profiles set radius_level=array[20,20,20,20,20,20]::smallint[] where user_id=b;
+ perform set_config('request.jwt.claim.sub',a::text,true);
+ if api.join_queue(300) is not null then raise exception 'First player should wait'; end if;
+ perform set_config('request.jwt.claim.sub',b::text,true);
+ if api.join_queue(300) is not null then raise exception 'Far levels matched too early'; end if;
+ if api.queue_population()<>2 then raise exception 'Queue population mismatch'; end if;
+ update public.matchmaking_queue set joined_at=now()-interval '121 seconds' where user_id=a;
+ t:=api.queue_status();
+ if t is null then raise exception 'Widened search did not pair'; end if;
+ again:=api.join_queue(300);
+ if again->>'matchId'<>t->>'matchId' then raise exception 'Duplicate join created a second match'; end if;
+ if api.queue_population()<>0 then raise exception 'Matched players remained counted'; end if;
+ update public.matches set status='completed' where id=(t->>'matchId')::uuid;
+ update public.profiles set radius_level=array[0,0,0,0,0,0]::smallint[] where user_id=b;
+ perform api.join_queue(600);
+ perform set_config('request.jwt.claim.sub',a::text,true);
+ t:=api.join_queue(600);
+ if t is null then raise exception 'Close levels failed to pair'; end if;
+ update public.matches set status='completed' where id=(t->>'matchId')::uuid;
+ perform api.join_queue(900);
+ update public.matchmaking_queue set last_seen=now()-interval '21 seconds' where user_id=a;
+ if api.queue_population()<>0 then raise exception 'Stale players still counted'; end if;
+ if not has_function_privilege('anon','api.queue_population()','EXECUTE') or has_function_privilege('anon','api.join_queue(integer)','EXECUTE') then raise exception 'Unexpected API privileges'; end if;
+ if has_table_privilege('authenticated','public.matchmaking_queue','INSERT') then raise exception 'Queue rating can be forged'; end if;
+ raise notice 'PASS: levels, widening, close pairing, duplicate joins, population, stale queues and access controls';
+end $$;
+rollback;

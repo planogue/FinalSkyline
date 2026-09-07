@@ -1,3 +1,4 @@
+import { playerLevel } from '../core/level';
 import {
   AA,
   BUILDINGS,
@@ -387,6 +388,8 @@ export class GameUI {
   // ------------------------------------------------------------ per frame
 
   sync(): void {
+    const queueCount = this.root.querySelector('.queue-count');
+    if (queueCount) queueCount.textContent = 'Players queueing: ' + (this.host.online.queueCount ?? '—');
     const { match, ui, meta } = this.host;
     const inGame = this.host.screen === 'game' && match !== null;
 
@@ -814,7 +817,13 @@ export class GameUI {
             this.toast(`Build an ${def.name} launcher first`);
             return;
           }
-          const n = buyAmmo(match.player, def.id, this.host.ui.ammoMult);
+          const quantity = this.host.ui.ammoMult;
+          if (match.player.money < quantity * def.ammoCost || def.ammoCap - match.player.ammo[def.id] < quantity) {
+            audio.deny();
+            this.toast(match.player.money < quantity * def.ammoCost ? 'Not enough cash for this quantity' : 'Not enough magazine space for this quantity');
+            return;
+          }
+          const n = buyAmmo(match.player, def.id, quantity);
           if (n > 0) {
             audio.buy();
             this.host.sendOnlineAction({ type: 'buy-ammo', batteryType: def.id, count: n });
@@ -829,7 +838,11 @@ export class GameUI {
           if (!match) return;
           count.textContent = String(match.player.ammo[def.id]);
           const noLauncher = match.player.aaOwned[def.id] === 0;
-          root.classList.toggle('dim', noLauncher || match.player.money < def.ammoCost);
+          const quantity = this.host.ui.ammoMult;
+          root.querySelector('.cost')!.textContent = '$' + quantity * def.ammoCost;
+          const unavailable = noLauncher || match.player.money < quantity * def.ammoCost || def.ammoCap - match.player.ammo[def.id] < quantity;
+          root.classList.toggle('dim', unavailable);
+          root.setAttribute('aria-disabled', String(unavailable));
         },
       });
     }
@@ -1034,7 +1047,12 @@ export class GameUI {
     });
     actions.append(play, shop, this.hintsToggle());
     wrap.appendChild(actions);
-
+    const queueCount = el('p', 'sub queue-count');
+    queueCount.textContent = 'Players queueing: ' + (this.host.online.queueCount ?? '—');
+    wrap.appendChild(queueCount);
+    const level = el('p', 'sub', 'Level ' + playerLevel(meta));
+    level.title = 'Based on your smoothed win rate and purchased star upgrades';
+    wrap.appendChild(level);
     wrap.appendChild(this.buildOnlineCard());
 
     const record = el(

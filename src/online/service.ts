@@ -8,6 +8,7 @@ export type OnlinePhase = 'loading' | 'disabled' | 'signed-out' | 'ready' | 'que
 
 export interface OnlineState {
   configured: boolean;
+  queueCount?: number | null;
   phase: OnlinePhase;
   username: string | null;
   wins: number;
@@ -106,6 +107,8 @@ export class OnlineService {
   private client: SupabaseClient | null;
   private userId: string | null = null;
   private queueTimer = 0;
+  private populationTimer = 0;
+  private populationPending = false;
   private channel: RealtimeChannel | null = null;
   private activeMatchId: string | null = null;
   /** Who we are actually playing, so nobody else's chatter is believed. */
@@ -138,6 +141,9 @@ export class OnlineService {
 
   async init(): Promise<void> {
     if (!this.client) return;
+    void this.refreshQueueCount();
+    window.clearInterval(this.populationTimer);
+    this.populationTimer = window.setInterval(() => void this.refreshQueueCount(), 3000);
     const { data, error } = await this.client.auth.getSession();
     if (error) {
       this.fail(error.message);
@@ -339,6 +345,17 @@ export class OnlineService {
     this.bufferedEvents = [];
     if (this.userId && this.state.phase === 'matched') this.set({ phase: 'ready', message: 'Ready for another match' });
     if (this.client && channel) await this.client.removeChannel(channel);
+  }
+
+  private async refreshQueueCount(): Promise<void> {
+    if (!this.client || this.populationPending) return;
+    this.populationPending = true;
+    try {
+      const { data, error } = await this.client.schema('api').rpc('queue_population');
+      const count = !error && typeof data === 'number' && Number.isInteger(data) && data >= 0 ? data : null;
+      this.state.queueCount = count;
+    } catch { this.state.queueCount = null; }
+    finally { this.populationPending = false; }
   }
 
   private async pollQueue(): Promise<void> {

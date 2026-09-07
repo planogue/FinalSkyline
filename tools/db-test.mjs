@@ -247,6 +247,7 @@ try {
   check('list is empty again', state.friends.length === 0, JSON.stringify(state.friends));
 
   // --- unlimited queue bucket from the previous migration ----------------
+  await client.query("update public.matches set status='completed' where status='playing'");
   await actAs(ada);
   const q = await rpc('api.join_queue', [0]);
   check('unlimited queue accepted', q === null, JSON.stringify(q));
@@ -257,7 +258,7 @@ try {
   // --- anon has no way in ------------------------------------------------
   const anonGrants = await client.query(
     `select count(*)::int as n from information_schema.role_routine_grants
-     where grantee = 'anon' and specific_schema = 'api'`,
+     where grantee = 'anon' and specific_schema = 'api' and routine_name <> 'queue_population'`,
   );
   check('anon cannot call the api schema', anonGrants.rows[0].n === 0, JSON.stringify(anonGrants.rows));
 

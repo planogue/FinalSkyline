@@ -403,3 +403,17 @@ prevents firing. A green winning countdown mirrors the opponent’s defeat timer
 Radar intelligence reveals every enemy radar and anti-air emplacement; all stay hidden
 until purchased. ABM magazines hold 100 rounds per type; X cycles purchase quantities
 through 1, 5, 10, 20, 50 and 100.
+
+### Matchmaking levels and live queue
+
+Level = floor(10 + 20 × (wins + 5) / (wins + losses + 10) + purchased upgrade steps / 3).
+A new player starts at level 20. Unspent stars do not increase level. The server
+calculates the level from the saved profile when a player joins. This uses the game's
+existing client-synced progression; it is a matchmaking aid, not a cheat-proof ranking.
+Search starts within 3 levels, widens by 3 every 15 seconds of the longer wait,
+and accepts any level after 120 seconds, within the same match-duration bucket.
+Queue status polling attempts matches again, so widening works without a new join.
+The anonymous-safe queue count exposes only an aggregate, refreshes every 3 seconds,
+and excludes clients whose queue heartbeat is over 20 seconds old.
+ABM cards show the complete selected bundle price and grey out until both the cash
+and magazine space are sufficient; purchases never silently shrink the bundle.
