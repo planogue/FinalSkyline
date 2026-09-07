@@ -9,6 +9,7 @@ import {
   buyBuilding,
   buyMissileUpgrade,
   buyRadarIntel,
+  buyBarrage,
   clearQueue,
   commitQueue,
   pinTarget,
@@ -24,6 +25,7 @@ export type OnlineAction =
   | { type: 'aa-reload'; batteryType: number }
   | { type: 'missile-upgrade'; tier: number }
   | { type: 'radar-intel' }
+  | { type: 'barrage-upgrade' }
   | { type: 'pin-target'; tier: number; x: number }
   | { type: 'unpin-target'; tier?: number }
   | { type: 'clear-targets' }
@@ -59,7 +61,7 @@ export function parseOnlineAction(value: unknown): OnlineAction | null {
         ? { type: action.type, batteryType: action.batteryType, x: action.x }
         : null;
     case 'buy-ammo':
-      return intBetween(action.batteryType, 1, 5) && intBetween(action.count, 1, 10)
+      return intBetween(action.batteryType, 1, 5) && intBetween(action.count, 1, 100)
         ? { type: action.type, batteryType: action.batteryType, count: action.count }
         : null;
     case 'aa-radius':
@@ -81,6 +83,7 @@ export function parseOnlineAction(value: unknown): OnlineAction | null {
       return typeof action.won === 'boolean' && MATCH_OVER_CAUSES.includes(action.cause as MatchOverCause)
         ? { type: action.type, won: action.won, cause: action.cause as MatchOverCause }
         : null;
+    case 'barrage-upgrade':
     case 'radar-intel':
     case 'clear-targets':
     case 'commit-targets':
@@ -111,6 +114,8 @@ export function applyRemoteAction(match: Match, meta: MetaSave, action: OnlineAc
       return buyMissileUpgrade(enemy, action.tier, meta) !== false;
     case 'radar-intel':
       return buyRadarIntel(enemy);
+    case 'barrage-upgrade':
+      return buyBarrage(enemy);
     case 'pin-target':
       return pinTarget(enemy, action.tier, WORLD.width - action.x) !== null;
     case 'unpin-target':

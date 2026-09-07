@@ -1,5 +1,6 @@
 import {
   AA,
+  BARRAGE,
   AA_MAX_PER_TYPE,
   BUILDINGS,
   BOTS,
@@ -76,7 +77,7 @@ export function hash01(n: number): number {
   return x - Math.floor(x);
 }
 
-const SLOTS_PER_LAYER = 40;
+const SLOTS_PER_LAYER = 56;
 
 /** Candidate plots across one layer of a side's land. */
 function citySlots(side: Side, layer: 0 | 1): { x: number }[] {
@@ -171,6 +172,9 @@ function makeSide(side: Side, name: string): SideState {
     launchCooldown: MISSILES.map(() => 0),
     shotsUsed: MISSILES.map(() => 0),
     radarIntel: false,
+    barrageOwned: false,
+    barrageTimer: 0,
+    barrageTruck: null,
     pending: [],
     queued: [],
     wipeoutTimer: 0,
@@ -596,4 +600,18 @@ const PAD_SETBACK = 90;
 
 export function difficultyProfile(match: Match) {
   return BOTS[match.difficulty];
+}
+
+/** One purchase grants recurring support for the rest of this match. */
+export function buyBarrage(state: SideState): boolean {
+  if (state.barrageOwned || state.money < BARRAGE.cost) return false;
+  state.money -= BARRAGE.cost;
+  state.stats.spent += BARRAGE.cost;
+  state.barrageOwned = true;
+  state.barrageTimer = BARRAGE.interval;
+  return true;
+}
+
+export function visibleEnemyDefences(state: SideState, intel: boolean): boolean {
+  return state.side === 'player' || intel;
 }

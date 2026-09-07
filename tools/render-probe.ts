@@ -2,8 +2,8 @@
  * Headless check on what the scene actually paints, using a recording stub in
  * place of a real 2D context. It exists for one rule that is easy to break and
  * impossible to unit-test any other way: the opponent's radars must stay off
- * the screen until the intel upgrade is bought, while every other battery —
- * and the player's own radar — is drawn as usual.
+ * the screen until the intel upgrade is bought. Enemy launchers are hidden
+ * too; the player's own defences stay visible.
  *
  *   npm run probe:render
  */
@@ -73,13 +73,14 @@ function paintedAt(radarIntel: boolean, worldX: number): boolean {
   const screenX = camera.toScreenX(worldX);
   const painted = record.translations.some((t) => Math.abs(t.x - screenX) < 1);
   // Sanity: the visible batteries must always show up, or the probe is lying.
-  for (const visible of [worldX + 300, WORLD.cityRight.x0 + 100]) {
+  for (const visible of [...(radarIntel ? [worldX + 300] : []), WORLD.cityRight.x0 + 100]) {
     const at = camera.toScreenX(visible);
     assert(
       record.translations.some((t) => Math.abs(t.x - at) < 1),
       `Expected a battery painted at world ${visible}`,
     );
   }
+  if (!radarIntel) assert(!record.translations.some(t => Math.abs(t.x - camera.toScreenX(worldX + 300)) < 1), 'Enemy launchers are hidden too');
   return painted;
 }
 

@@ -1,4 +1,4 @@
-import { MATCH, META, MISSILES, WORLD } from '../core/config';
+import { BARRAGE, BUILDINGS, MATCH, META, MISSILES, WORLD } from '../core/config';
 import type { MetaSave, SideState } from '../core/types';
 import { audio } from '../core/audio';
 import { noteIncomingTier, updateBot } from './bot';
@@ -59,6 +59,9 @@ export function stepMatch(match: Match, dt: number, meta: MetaSave): void {
   // --- launch queues -----------------------------------------------------
   processLaunches(match, match.player, dt, meta);
   processLaunches(match, match.enemy, dt, meta);
+
+  updateBarrage(match, match.player, dt);
+  updateBarrage(match, match.enemy, dt);
 
   // --- simulation --------------------------------------------------------
   updateMissiles(match, dt);
@@ -198,4 +201,46 @@ function finish(match: Match, won: boolean, pv: number, ev: number, reason: stri
   if (won) meta.wins++;
   else meta.losses++;
   audio.fanfare(won);
+}
+
+/** Recurring truck support uses ordinary tier-II missiles and interception. */
+export function updateBarrage(match: Match, state: SideState, dt: number): void {
+  if (!state.barrageOwned) return;
+  state.barrageTimer -= dt;
+  if (inPeace(match)) return;
+  const enemy = state.side === 'player' ? match.enemy : match.player;
+  const direction = state.side === 'player' ? -1 : 1;
+  const start = state.side === 'player' ? WORLD.cityRight.x0 : WORLD.cityLeft.x1;
+  const end = WORLD.width / 2 - direction * 70;
+  if (!state.barrageTruck && state.barrageTimer <= 0) {
+    if (!enemy.buildings.some(b => !b.destroyed)) return;
+    state.barrageTruck = { x: start, age: 0, shots: 0, fireAcc: 0, targets: [] };
+    state.barrageTimer = BARRAGE.interval;
+  }
+  const truck = state.barrageTruck;
+  if (!truck) return;
+  const oldAge = truck.age;
+  truck.age += dt;
+  truck.x = start + (end - start) * Math.min(1, truck.age / BARRAGE.travelSeconds);
+  if (truck.age < BARRAGE.travelSeconds) return;
+  if (!truck.targets.length) {
+    const alive = enemy.buildings.filter(b => !b.destroyed).sort((a,b) => direction * (a.x - b.x));
+    if (!alive.length) { state.barrageTruck = null; return; }
+    truck.targets = Array.from({length: BARRAGE.rockets}, (_, i) => alive[Math.floor(i * alive.length / BARRAGE.rockets)].uid);
+  }
+  truck.fireAcc += truck.age - Math.max(oldAge, BARRAGE.travelSeconds);
+  while (truck.fireAcc >= BARRAGE.shotInterval && truck.shots < BARRAGE.rockets) {
+    truck.fireAcc -= BARRAGE.shotInterval;
+    const alive = enemy.buildings.filter(b => !b.destroyed);
+    if (!alive.length) { state.barrageTruck = null; return; }
+    const intended = enemy.buildings.find(b => b.uid === truck.targets[truck.shots]);
+    const target = intended && !intended.destroyed ? intended : alive.reduce((best,b) => Math.abs(b.x-(intended?.x ?? end)) < Math.abs(best.x-(intended?.x ?? end)) ? b : best);
+    // Deterministic spread stays within the selected building footprint.
+    const jitter = direction * (Math.sin((truck.shots + 1) * 127.1) * 0.5) * BUILDINGS[target.type].w;
+    const missile = spawnMissile(state, 2, target.x + jitter, truck.x);
+    match.missiles.push(missile);
+    truck.shots++;
+    audio.launch(2, panFor(match, truck.x));
+  }
+  if (truck.shots >= BARRAGE.rockets) state.barrageTruck = null;
 }

@@ -145,6 +145,9 @@ export interface SideState {
   shotsUsed: number[];
   /** Bought the intel upgrade that reveals the opponent's camouflaged radars. */
   radarIntel: boolean;
+  barrageOwned: boolean;
+  barrageTimer: number;
+  barrageTruck: { x: number; age: number; shots: number; fireAcc: number; targets: number[] } | null;
   /** Pending launches waiting for their tier's launcher to free up. */
   pending: QueuedShot[];
   /** Targets pinned but not yet committed with Fight. */

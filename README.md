@@ -36,7 +36,7 @@ them. This preference is saved on the device; shortcuts keep working while hidde
 | Enter | Place the selected building/system or pin a missile target |
 | F / Space | Commit pinned targets to their launchers; ceasefire still applies |
 | Z / C | Undo the last pin / clear all uncommitted pins (refunds cash) |
-| X | Cycle ammunition purchase quantity: 1 / 5 / 10 |
+| X | Cycle ammunition purchase quantity: 1 / 5 / 10 / 20 / 50 / 100 |
 | P / Esc | Pause or resume / cancel placement, close a panel, or pause |
 | V / + / − | Toggle battlefield view / zoom in / zoom out |
 | G / M / H | Defence coverage / mute / keyboard hints |
@@ -388,3 +388,15 @@ Pushing a commit to `main` starts a production deployment through the Git integr
 
 Portrait phones work but are cramped — the game is laid out for landscape, and says so
 with a chip in the status bar.
+
+### Barrage support and expanded cities
+
+Cities now have 1,600 world units of land and 56 plots in each building layer.
+The one-time $2,000 barrage truck upgrade is beside radar intelligence (Upgrades → E → 2).
+A truck arrives every 150 seconds, drives toward the centre for 12 seconds, then fires
+24 tier-II rockets at 0.12-second intervals. Shots are divided across surviving buildings
+from front to back, with spread within their footprints; destroyed targets are reassigned.
+Hawk systems can intercept these rockets. Peace prevents the truck from firing.
+Radar intelligence reveals every enemy radar and anti-air emplacement; all stay hidden
+until purchased. ABM magazines hold 100 rounds per type; X cycles purchase quantities
+through 1, 5, 10, 20, 50 and 100.

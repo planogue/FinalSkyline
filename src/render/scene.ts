@@ -1,7 +1,7 @@
 import { AA, BUILDINGS, MATCH, MISSILES, WORLD } from '../core/config';
 import type { AaBattery, Building, MetaSave } from '../core/types';
 import { standingFraction } from '../game/combat';
-import { aaRadius, hash01, launchPadX, type Match } from '../game/state';
+import { aaRadius, visibleEnemyDefences, hash01, launchPadX, type Match } from '../game/state';
 import { Camera } from './camera';
 
 export interface SceneOpts {
@@ -49,14 +49,36 @@ export function drawScene(ctx: CanvasRenderingContext2D, match: Match, cam: Came
     drawCity(ctx, cam, side.buildings, night, highlight);
     // Their radars are camouflaged until the intel upgrade is bought.
     const visible = side.batteries.filter(
-      (b) => !(side.side === 'enemy' && isRadar(b.type) && !opts.radarIntel),
+      () => visibleEnemyDefences(side, opts.radarIntel),
     );
     for (const { battery, offset } of stackLayout(visible)) {
       drawBattery(ctx, cam, battery, night, offset);
+      if (side.side === 'enemy' && opts.radarIntel) {
+        ctx.save(); ctx.fillStyle = AA[battery.type].color; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(AA[battery.type].name + ' ▼', cam.toScreenX(battery.x), cam.groundScreenY() - 70 * cam.scale);
+        ctx.restore();
+      }
     }
   }
 
   drawGround(ctx, cam, night);
+
+  for (const side of [match.player, match.enemy]) {
+    const truck = side.barrageTruck;
+    if (!truck) continue;
+    ctx.save();
+    ctx.translate(cam.toScreenX(truck.x), cam.groundScreenY());
+    ctx.scale(cam.scale * (side.side === 'player' ? -1 : 1), cam.scale);
+    ctx.fillStyle = '#526743'; ctx.fillRect(-30, -27, 60, 20);
+    ctx.fillStyle = '#91bdc5'; ctx.fillRect(15, -24, 12, 10);
+    ctx.fillStyle = '#171c22';
+    for (const x of [-20, -6, 21]) { ctx.beginPath(); ctx.arc(x, -5, 7, 0, Math.PI*2); ctx.fill(); }
+    ctx.save(); ctx.translate(-7,-27); ctx.rotate(-0.45);
+    ctx.fillStyle = '#374b30'; ctx.fillRect(-22,-11,40,12);
+    ctx.strokeStyle = '#87977a';
+    for (let i=0;i<4;i++) ctx.strokeRect(-22, -11+i*3, 40, 3);
+    ctx.restore(); ctx.restore();
+  }
 
   if (opts.showRings) drawRings(ctx, cam, match, opts.meta);
 

@@ -209,7 +209,7 @@ function run(match: ReturnType<typeof createOnlineMatch>, seconds: number): void
   assert(buyBuilding(home, home.player, 8, 2500));
   assert(buyBuilding(home, home.player, 0, 2620));
   assert(buyBattery(home.player, 3, 2750));
-  assert(buyBattery(home.player, 0, 2750), 'a radar shares the emplacement');
+  assert(buyBattery(home.player, 0, 2850), 'a radar uses a separate emplacement');
   assert.equal(buyAmmo(home.player, 3, 7), 7);
   home.player.buildings[1].hp = home.player.buildings[1].maxHp * 0.5;
 
@@ -225,7 +225,7 @@ function run(match: ReturnType<typeof createOnlineMatch>, seconds: number): void
     Math.round(WORLD.width - Math.round(tower.x)),
     'positions arrive mirrored',
   );
-  assert.equal(away.enemy.batteries.length, 2, 'both systems on the shared plot');
+  assert.equal(away.enemy.batteries.length, 2, 'both systems survive synchronization');
   assert.equal(away.enemy.aaOwned[3], 1);
   assert.equal(away.enemy.aaOwned[0], 1);
   assert.equal(away.enemy.ammo[3], 7, 'magazines come across');
@@ -275,3 +275,17 @@ for (const junk of [
 }
 
 console.log('Online mirror test passed: build, defence, ammo, upgrades, targeting, validation, city snapshots, and the end-of-match handshake stay in sync.');
+
+const support = createOnlineMatch('support',600);
+support.enemy.money=10000;
+assert.deepEqual(parseOnlineAction({type:'barrage-upgrade'}),{type:'barrage-upgrade'});
+assert(applyRemoteAction(support,fairMeta,{type:'barrage-upgrade'}));
+assert(support.enemy.barrageOwned);
+assert(!support.player.barrageOwned);
+assert.equal(support.enemy.money,8000);
+assert(!applyRemoteAction(support,fairMeta,{type:'barrage-upgrade'}));
+assert(parseOnlineAction({type:'buy-ammo',batteryType:2,count:100}));
+assert(!parseOnlineAction({type:'buy-ammo',batteryType:2,count:101}));
+assert(applyRemoteAction(support,fairMeta,{type:'buy-ammo',batteryType:2,count:100}));
+assert.equal(support.enemy.ammo[2],100);
+console.log('PASS: online barrage purchase and 100-round orders');

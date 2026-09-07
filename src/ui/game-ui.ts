@@ -7,6 +7,7 @@ import {
   META,
   MISSILES,
   RADAR_INTEL_COST,
+  BARRAGE,
   canIntercept,
   onlineDuration,
   onlineDurationLabel,
@@ -26,6 +27,7 @@ import {
   buyAmmo,
   buyMissileUpgrade,
   buyRadarIntel,
+  buyBarrage,
   canUnlockMissile,
   cityValue,
   clearQueue,
@@ -64,7 +66,7 @@ const UPGRADE_ROW_KEYS = ['r', 'd', 'm', 'e'];
 export interface UiState {
   panel: PanelId;
   selectedTier: number;
-  ammoMult: 1 | 5 | 10;
+  ammoMult: 1 | 5 | 10 | 20 | 50 | 100;
   showRings: boolean;
   aimX: number | null;
   difficulty: Difficulty;
@@ -786,7 +788,7 @@ export class GameUI {
     shortcut(mult, 'x');
     mult.addEventListener('click', () => {
       audio.click();
-      const order: (1 | 5 | 10)[] = [1, 5, 10];
+      const order: (1 | 5 | 10 | 20 | 50 | 100)[] = [1, 5, 10, 20, 50, 100];
       const i = order.indexOf(this.host.ui.ammoMult);
       this.host.ui.ammoMult = order[(i + 1) % order.length];
       (mult.firstElementChild as HTMLElement).textContent = `x${this.host.ui.ammoMult}`;
@@ -1691,7 +1693,7 @@ export class GameUI {
     });
 
     const intel = el('button', 'card split');
-    intel.title = 'Their radar dishes are camouflaged. Buy this once and they are drawn like every other battery.';
+    intel.title = 'Reveal all enemy radar and anti-air positions for the rest of this match.';
     const intelArt = el('div', 'art', aaIcon(0));
     const intelMeta = el('div', 'meta');
     const intelCost = el('div', 'cost');
@@ -1722,7 +1724,24 @@ export class GameUI {
       intelDelta.textContent = owned ? 'Active' : 'Once';
       intel.classList.toggle('dim', owned || match.player.money < RADAR_INTEL_COST);
     });
-    mkRow('Reveal enemy radar positions', [intel]);
+    const truck = el('button', 'card split');
+    truck.style.width = '190px';
+    truck.title = 'Barrage truck: 24 tier-II rockets every 150 seconds after purchase; $2000 once. First arrival after 150 seconds, then 12 seconds to drive into position. Intercepted by Hawk.';
+    truck.innerHTML = '<div class="art" style="font-size:30px">🚚</div><div class="meta">Barrage truck</div><div class="cost"></div><div class="delta">24 rockets / 150s</div>';
+    truck.addEventListener('click', () => {
+      if (buyBarrage(match.player)) {
+        this.host.sendOnlineAction({ type: 'barrage-upgrade' });
+        audio.buy();
+        this.toast('Barrage truck purchased — arrives every 150 seconds');
+      } else { audio.deny(); this.toast(match.player.barrageOwned ? 'Barrage truck already owned' : 'Not enough cash'); }
+    });
+    this.upgradeUpdates.push(() => {
+      const owned = match.player.barrageOwned;
+      truck.querySelector('.cost')!.textContent = owned ? 'OWNED' : '$' + BARRAGE.cost;
+      truck.querySelector('.delta')!.textContent = owned ? (match.player.barrageTruck ? 'Barrage underway' : Math.ceil(Math.max(0, match.player.barrageTimer)) + 's to arrival') : '24 / 150s';
+      truck.classList.toggle('dim', owned || match.player.money < BARRAGE.cost);
+    });
+    mkRow('Radar intelligence & barrage support', [intel, truck]);
 
     const legend = el('div', 'legend');
     legend.innerHTML = AA.map(

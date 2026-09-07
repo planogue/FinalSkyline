@@ -3,8 +3,8 @@ import { AA, BOTS, BUILDINGS, MATCH, META, MISSILES, WORLD, type Difficulty } fr
 import { defaultMeta } from '../src/core/storage';
 import { updateBot } from '../src/game/bot';
 import { missileAt, spawnMissile, updateDefences, updateInterceptors, updateMissiles } from '../src/game/combat';
-import { stepMatch } from '../src/game/engine';
-import { AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
+import { stepMatch, updateBarrage } from '../src/game/engine';
+import { buyBarrage, buyAmmo, buyRadarIntel, visibleEnemyDefences, buildingPlacementAt, AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
 
 const meta = defaultMeta();
 
@@ -312,3 +312,75 @@ try {
 }
 console.table(rows);
 console.log('PASS: non-overlapping emplacements, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');
+
+// Support ownership, balanced targeting, cooldown, and ordinary interception metadata.
+for (const count of [1, 2, 4]) {
+  const battle = createMatch('easy', Infinity);
+  battle.time = MATCH.peaceSeconds + 1;
+  battle.player.money = 10000;
+  battle.enemy.money = 10000;
+  battle.enemy.buildings = [];
+  for (let i=0;i<count;i++) assert(buyBuilding(battle,battle.enemy,0,400+i*180));
+  assert(buyBarrage(battle.player));
+  assert.equal(battle.player.money,8000);
+  assert.equal(buyBarrage(battle.player),false);
+  for (let i=0;i<1490;i++) updateBarrage(battle,battle.player,0.1);
+  assert.equal(battle.player.barrageTruck,null);
+  for (let i=0;i<170;i++) updateBarrage(battle,battle.player,0.1);
+  assert.equal(battle.missiles.length,24);
+  assert.equal(battle.player.stats.launched,24);
+  const targets = [...battle.enemy.buildings].sort((a,b)=>b.x-a.x);
+  const tally = targets.map(b=>battle.missiles.filter(m=>Math.abs(m.tx-b.x)<=BUILDINGS[b.type].w/2).length);
+  assert.deepEqual(tally,targets.map(()=>24/count));
+  for (const m of battle.missiles) {
+    assert.equal(m.tier,2); assert.equal(m.damage,MISSILES[1].damage);
+    assert(m.x0 < WORLD.cityRight.x0 && m.x0 > WORLD.width/2);
+  }
+  assert.equal(battle.player.barrageTruck,null);
+  for (let i=0;i<1500;i++) updateBarrage(battle,battle.player,0.1);
+  assert.equal(battle.missiles.length,48,'Recurring support does not need repurchasing');
+}
+const intelMatch=createMatch('easy',300);
+intelMatch.player.money=10000;
+assert(!visibleEnemyDefences(intelMatch.enemy,intelMatch.player.radarIntel));
+assert(buyRadarIntel(intelMatch.player));
+assert(visibleEnemyDefences(intelMatch.enemy,intelMatch.player.radarIntel));
+assert(!createMatch('easy',300).player.radarIntel,'Intel resets for a new match');
+for(let tier=1;tier<AA.length;tier++) {
+  assert.equal(buyAmmo(intelMatch.player,tier,100),100);
+  assert.equal(buyAmmo(intelMatch.player,tier,1),0);
+}
+console.log('PASS: recurring barrage, balanced targeting, radar visibility and 100-round stocks');
+
+const expanded=createMatch('easy',Infinity);
+assert(buildingPlacementAt(expanded.player,0,2050),'New player land accepts buildings');
+assert(buildingPlacementAt(expanded.enemy,0,1650),'New enemy land accepts buildings');
+assert.equal(WORLD.cityRight.x1-WORLD.cityRight.x0,1600);
+
+const retarget=createMatch('easy',Infinity);
+retarget.time=121;retarget.player.money=10000;retarget.enemy.money=10000;
+assert(buyBuilding(retarget,retarget.enemy,0,800));
+assert(buyBuilding(retarget,retarget.enemy,0,1200));
+assert(buyBarrage(retarget.player));retarget.player.barrageTimer=0;
+updateBarrage(retarget,retarget.player,12.15);
+const doomed=retarget.enemy.buildings.find(b=>b.x>1000)!;
+doomed.destroyed=true;doomed.hp=0;
+updateBarrage(retarget,retarget.player,3);
+assert.equal(retarget.missiles.length,24);
+const survivor=retarget.enemy.buildings.find(b=>!b.destroyed)!;
+assert(retarget.missiles.slice(1).every(m=>Math.abs(m.tx-survivor.x)<BUILDINGS[0].w/2));
+
+const intercepted=createMatch('easy',Infinity);
+intercepted.time=121;intercepted.player.money=10000;intercepted.enemy.money=10000;
+assert(buyBuilding(intercepted,intercepted.enemy,8,800));
+const target=intercepted.enemy.buildings[0];
+assert(buyBattery(intercepted.enemy,2,target.x));intercepted.enemy.ammo[2]=100;
+assert(buyBarrage(intercepted.player));intercepted.player.barrageTimer=0;
+updateBarrage(intercepted,intercepted.player,12.15);
+const rocket=intercepted.missiles[0];
+for(let t=0;!rocket.dead&&t<rocket.flightTime+1;t+=1/60){
+ updateDefences(intercepted,1/60,meta);updateInterceptors(intercepted,1/60);updateMissiles(intercepted,1/60);
+}
+assert.equal(intercepted.enemy.stats.intercepted,1,'Hawk intercepts a truck rocket');
+assert.equal(target.hp,target.maxHp);
+console.log('PASS: expanded land, retargeting and truck rocket interception');
