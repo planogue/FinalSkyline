@@ -1,45 +1,37 @@
 import assert from 'node:assert/strict';
-import { AA_SITE_SNAP, AA_STACK_LIMIT, BOTS, BUILDINGS, MATCH, META, MISSILES, WORLD, type Difficulty } from '../src/core/config';
+import { AA, BOTS, BUILDINGS, MATCH, META, MISSILES, WORLD, type Difficulty } from '../src/core/config';
 import { defaultMeta } from '../src/core/storage';
 import { updateBot } from '../src/game/bot';
 import { missileAt, spawnMissile, updateDefences, updateInterceptors, updateMissiles } from '../src/game/combat';
 import { stepMatch } from '../src/game/engine';
-import { buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
+import { AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
 
 const meta = defaultMeta();
 
-// Any five systems may share one emplacement, whatever their type, and a drop
-// near an existing site joins it rather than standing slightly beside it.
-const stack = createMatch('easy', 300);
-stack.player.money = 100000;
-assert(buyBattery(stack.player, 0, 2600));
-assert(buyBattery(stack.player, 1, 2600), 'a launcher sites on top of a radar');
-assert(buyBattery(stack.player, 0, 2600 + AA_SITE_SNAP - 1), 'a near miss joins the same site');
-assert.deepEqual(
-  stack.player.batteries.map((b) => b.x),
-  [2600, 2600, 2600],
-  'a joined battery snaps onto the site it joined',
-);
-assert(buyBattery(stack.player, 2, 2600));
-assert(buyBattery(stack.player, 3, 2600));
-assert.equal(stack.player.batteries.length, AA_STACK_LIMIT, 'five systems fit');
-assert.equal(canDeployAt(stack.player, 2600, 4), false, 'the sixth is refused');
-assert.equal(buyBattery(stack.player, 4, 2600), false);
-assert(canDeployAt(stack.player, 2600 + AA_SITE_SNAP + 40, 4), 'a fresh site is still free');
-assert(buyBattery(stack.player, 4, 2600 + AA_SITE_SNAP + 40));
-
-// A refused drop costs nothing, and the land still bounds where anything goes.
+// Check every incoming tier against every existing radar or launcher.
+for (let existing = 0; existing < AA.length; existing++) {
+  for (let incoming = 0; incoming < AA.length; incoming++) {
+    const match = createMatch('easy', 300);
+    const state = match.player;
+    state.money = 100000;
+    assert(buyBattery(state, existing, 2600));
+    const cash = state.money;
+    for (const offset of [0, 1, -1, AA_MIN_SPACING - 1, 1 - AA_MIN_SPACING]) {
+      assert.equal(canDeployAt(state, 2600 + offset, incoming), false);
+      assert.equal(buyBattery(state, incoming, 2600 + offset), false);
+    }
+    assert.equal(state.money, cash, 'Rejected overlap must not charge cash');
+    assert.equal(state.batteries.length, 1);
+    assert(buyBattery(state, incoming, 2600 + AA_MIN_SPACING));
+    assert.equal(state.batteries[1].x, 2600 + AA_MIN_SPACING);
+  }
+}
 const spacing = createMatch('easy', 300);
-spacing.player.money = 1000;
-assert(buyBattery(spacing.player, 1, 2600));
+spacing.player.money = 100000;
 for (const x of [NaN, Infinity, WORLD.cityLeft.x0, WORLD.cityRight.x1 + 400]) {
-  assert.equal(canDeployAt(spacing.player, x, 1), false, `Reject invalid site ${x}`);
+  assert.equal(canDeployAt(spacing.player, x, 1), false);
   assert.equal(buyBattery(spacing.player, 1, x), false);
 }
-assert.equal(spacing.player.money, 1000, 'Rejected placements must not charge cash');
-assert(buyBattery(spacing.player, 1, 2600), 'the second Avenger stacks on the first');
-assert.equal(spacing.player.money, 982);
-assert.equal(buyBattery(spacing.player, 1, 2600), false, 'still max two of each type');
 
 // Heavier warheads open one at a time, however much cash is on hand.
 const ladder = createMatch('easy', 300);
@@ -319,4 +311,4 @@ try {
   Math.random = random;
 }
 console.table(rows);
-console.log('PASS: stacked emplacements, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');
+console.log('PASS: non-overlapping emplacements, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');

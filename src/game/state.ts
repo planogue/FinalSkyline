@@ -1,8 +1,6 @@
 import {
   AA,
   AA_MAX_PER_TYPE,
-  AA_SITE_SNAP,
-  AA_STACK_LIMIT,
   BUILDINGS,
   BOTS,
   BOT_NAMES,
@@ -336,44 +334,14 @@ export function deployZone(side: Side): { x0: number; x1: number } {
 
 const AA_DEPLOY_MARGIN = 150;
 
-/**
- * Batteries share an emplacement rather than needing room of their own: drop
- * one near an existing site and it joins that site, stacked up to
- * AA_STACK_LIMIT deep. A tight cluster of layered systems is a real thing to
- * want, and the renderer fans a shared site out so nothing hides behind
- * anything else.
- */
-export function deploySiteX(state: SideState, x: number): number {
-  let best: number | null = null;
-  let bestGap = AA_SITE_SNAP;
-  for (const b of state.batteries) {
-    const gap = Math.abs(b.x - x);
-    if (gap <= bestGap) {
-      bestGap = gap;
-      best = b.x;
-    }
-  }
-  return best ?? x;
-}
-
-/** How many systems already stand on the emplacement nearest to x. */
-export function stackedAt(state: SideState, x: number): number {
-  const site = deploySiteX(state, x);
-  return state.batteries.filter((b) => b.x === site).length;
-}
+/** Minimum separation between all radar and anti-air systems. */
+export const AA_MIN_SPACING = 56;
 
 export function canDeployAt(state: SideState, x: number, _type?: number): boolean {
   const zone = deployZone(state.side);
   if (!Number.isFinite(x) || x < zone.x0 || x > zone.x1) return false;
-  return stackedAt(state, x) < AA_STACK_LIMIT;
+  return spreadOut(state, x);
 }
-
-/**
- * Nothing forbids a tighter cluster any more, but a side placing batteries for
- * itself still spreads them out by this much — scattering cover across the
- * city beats piling it all onto one plot.
- */
-export const AA_MIN_SPACING = 56;
 
 /** Places a battery at x. Pass no x for a random spot in the side's own land. */
 export function buyBattery(state: SideState, type: number, x?: number): boolean {
@@ -382,7 +350,7 @@ export function buyBattery(state: SideState, type: number, x?: number): boolean 
   const dropped = x === undefined ? randomDeploySpot(state, type) : x;
   if (dropped === null) return false;
   if (!canDeployAt(state, dropped, type)) return false;
-  const at = deploySiteX(state, dropped);
+  const at = dropped;
   state.money -= cost;
   state.stats.spent += cost;
   state.aaOwned[type]++;
@@ -438,7 +406,7 @@ export function bestDeploySpot(state: SideState, type: number, radius: number): 
 
 function randomDeploySpot(state: SideState, type: number): number | null {
   const zone = deployZone(state.side);
-  // Prefer somewhere clear; fall back to sharing a site once the land is full.
+  // Choose a clear site with room for a separate system.
   for (let i = 0; i < 60; i++) {
     const x = zone.x0 + Math.random() * (zone.x1 - zone.x0);
     if (spreadOut(state, x) && canDeployAt(state, x, type)) return x;

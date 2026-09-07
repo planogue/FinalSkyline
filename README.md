@@ -203,11 +203,9 @@ saved up cannot skip straight to the biggest warhead.
 
 ### Emplacements
 
-Anti-air systems share a plot rather than needing room of their own. Drop one within
-`AA_SITE_SNAP` of an existing emplacement and it joins that site, up to
-`AA_STACK_LIMIT` systems deep; the renderer fans a shared site out so nothing hides
-behind anything else. A side siting its own defences still spreads them across the city,
-because scattered cover beats one very well defended plot.
+Every radar and anti-air system needs its own space, including the final tier.
+Placements closer than `AA_MIN_SPACING` (56 world units) to any existing system
+are rejected without charging cash. This rule applies to players and bots.
 
 Tuning the game means editing `src/core/config.ts` and re-running `npm run sim`.
 

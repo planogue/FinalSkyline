@@ -1,5 +1,5 @@
 import './style.css';
-import { AA, AA_STACK_LIMIT, MATCH, MISSILES, WORLD } from './core/config';
+import { AA, MATCH, MISSILES, WORLD } from './core/config';
 import { audio } from './core/audio';
 import { defaultMeta, loadMeta, saveMeta } from './core/storage';
 import type { PanelId } from './core/types';
@@ -366,7 +366,7 @@ function handleWorldAction(worldX: number, quiet = false): void {
         refuse(
           worldX < zone.x0 || worldX > zone.x1
             ? 'That is not your land'
-            : `That emplacement is full — ${AA_STACK_LIMIT} systems is the limit`,
+            : 'Too close to another radar or anti-air system',
         );
         return;
       }

@@ -1,7 +1,6 @@
 import {
   AA,
   AA_MAX_PER_TYPE,
-  AA_STACK_LIMIT,
   BUILDINGS,
   BOTS,
   MATCH,
@@ -734,7 +733,7 @@ export class GameUI {
         title:
           def.interceptsTier === 0
             ? 'Radar — early warning: impact markers appear seconds sooner and off-screen missiles get tracked'
-            : `${def.name} — ${interceptsWhat(def)}. Up to ${AA_STACK_LIMIT} systems can share one emplacement`,
+            : `${def.name} — ${interceptsWhat(def)}. Leave space between radars and anti-air systems`,
         onClick: () => {
           const match = this.host.match;
           if (!match) return;
@@ -1046,7 +1045,7 @@ export class GameUI {
     help.innerHTML = `<summary style="cursor:pointer;font-weight:800;color:#dfe6ee;padding:6px 0">How it works</summary>
       <ul style="padding-left:18px;margin:6px 0">
         <li><b>Buildings</b> pay income every 2 seconds. Pick a type, then tap a free plot on your land to place it. Each type has a cap that rises by one every ${MATCH.limitStepSeconds / 60} minutes; a levelled building frees its slot so you can rebuild.</li>
-        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it wherever you like; drop one onto an existing emplacement and it joins it, up to ${AA_STACK_LIMIT} systems deep. Batteries can be bombed, and replaced once they are.</li>
+        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it with room between it and every existing radar or anti-air system. Batteries can be bombed, and replaced once they are.</li>
         <li><b>ABM rounds</b> are the ammunition. An empty battery cannot intercept anything.</li>
         <li><b>Upgrades</b> (in-match, paid in cash) widen defence radius, cut anti-air reload, and unlock heavier missiles.</li>
         <li><b>Attacking</b>: open ICBM, pick a tier, tap their city to pin targets, then hit Fight. Each tier launches on its own reload timer, and heavier tiers unlock one at a time — you cannot skip ahead to the big warheads.</li>

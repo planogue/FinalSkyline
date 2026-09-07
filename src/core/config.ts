@@ -239,15 +239,6 @@ export function canIntercept(def: AaDef, tier: number): boolean {
  */
 export const RADAR_INTEL_COST = 1500;
 
-/** How many anti-air systems may share one emplacement. */
-export const AA_STACK_LIMIT = 5;
-
-/**
- * Drop a battery within this of an existing emplacement and it joins it rather
- * than standing alone, which keeps a stack tidy enough to draw.
- */
-export const AA_SITE_SNAP = 44;
-
 /** Interceptor flight speed as a multiple of the incoming missile's speed. */
 export const INTERCEPTOR_SPEED_FACTOR = 1.4;
 export const INTERCEPTOR_MIN_SPEED = 480;
