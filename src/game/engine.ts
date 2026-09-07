@@ -13,6 +13,8 @@ import {
 } from './combat';
 import {
   cityValue,
+  hash01,
+  syncDefenceLimits,
   difficultyProfile,
   incomePerTick,
   inPeace,
@@ -35,6 +37,7 @@ export function stepMatch(match: Match, dt: number, meta: MetaSave): void {
   }
 
   // --- building cap milestones ------------------------------------------
+  syncDefenceLimits(match);
   const step = limitSteps(match);
   if (step > match.lastLimitStep) {
     match.lastLimitStep = step;
@@ -203,44 +206,75 @@ function finish(match: Match, won: boolean, pv: number, ev: number, reason: stri
   audio.fanfare(won);
 }
 
-/** Recurring truck support uses ordinary tier-II missiles and interception. */
+/** Recurring support drives in, raises the rack, fires, stows it and drives away. */
 export function updateBarrage(match: Match, state: SideState, dt: number): void {
   if (!state.barrageOwned) return;
-  state.barrageTimer -= dt;
-  if (inPeace(match)) return;
-  const enemy = state.side === 'player' ? match.enemy : match.player;
+  state.barrageTimer = Math.max(0, state.barrageTimer - dt);
   const direction = state.side === 'player' ? -1 : 1;
-  const start = state.side === 'player' ? WORLD.cityRight.x0 : WORLD.cityLeft.x1;
-  const end = WORLD.width / 2 - direction * 70;
+  const outside = state.side === 'player' ? WORLD.width + 500 : -500;
+  const launchX = WORLD.width / 2 - direction * 70;
   if (!state.barrageTruck && state.barrageTimer <= 0) {
-    if (!enemy.buildings.some(b => !b.destroyed)) return;
-    state.barrageTruck = { x: start, age: 0, shots: 0, fireAcc: 0, targets: [] };
+    state.barrageTrips++;
+    state.barrageTruck = { x: outside, phase: 'entering', age: 0, shots: 0, fireAcc: 0, targets: [] };
     state.barrageTimer = BARRAGE.interval;
   }
   const truck = state.barrageTruck;
   if (!truck) return;
-  const oldAge = truck.age;
-  truck.age += dt;
-  truck.x = start + (end - start) * Math.min(1, truck.age / BARRAGE.travelSeconds);
-  if (truck.age < BARRAGE.travelSeconds) return;
-  if (!truck.targets.length) {
-    const alive = enemy.buildings.filter(b => !b.destroyed).sort((a,b) => direction * (a.x - b.x));
-    if (!alive.length) { state.barrageTruck = null; return; }
-    truck.targets = Array.from({length: BARRAGE.rockets}, (_, i) => alive[Math.floor(i * alive.length / BARRAGE.rockets)].uid);
+  let remaining = dt;
+  while (remaining > 0) {
+    if (truck.phase === 'firing') {
+      if (inPeace(match)) return;
+      // Decide the entire spread here, after the truck reaches its firing position.
+      if (!truck.targets.length) truck.targets = barrageTargets(match, state);
+      const advance = Math.min(remaining, BARRAGE.shotInterval - truck.fireAcc);
+      truck.fireAcc += advance;
+      remaining -= advance;
+      if (truck.fireAcc + 1e-9 < BARRAGE.shotInterval) break;
+      truck.fireAcc = 0;
+      let target = truck.targets[truck.shots];
+      const enemy = state.side === 'player' ? match.enemy : match.player;
+      if (target.uid !== undefined && !enemy.buildings.some(b => b.uid === target.uid && !b.destroyed)) {
+        const alive = enemy.buildings.filter(b => !b.destroyed);
+        target = alive.length
+          ? { x: alive.reduce((best, b) => Math.abs(b.x - target.x) < Math.abs(best.x - target.x) ? b : best).x }
+          : barrageTargets(match, state)[truck.shots];
+      }
+      const missile = spawnMissile(state, 2, target.x, truck.x + direction * 18, WORLD.groundY - 63);
+      match.missiles.push(missile);
+      truck.shots++;
+      audio.launch(2, panFor(match, truck.x));
+      if (truck.shots === BARRAGE.rockets) { truck.phase = 'lowering'; truck.age = 0; }
+      continue;
+    }
+    const duration = truck.phase === 'entering' || truck.phase === 'leaving'
+      ? BARRAGE.travelSeconds : BARRAGE.elevationSeconds;
+    const advance = Math.min(remaining, duration - truck.age);
+    truck.age += advance;
+    remaining -= advance;
+    const progress = Math.min(1, truck.age / duration);
+    if (truck.phase === 'entering') truck.x = outside + (launchX - outside) * progress;
+    if (truck.phase === 'leaving') truck.x = launchX + (outside - launchX) * progress;
+    if (truck.age + 1e-9 < duration) break;
+    if (truck.phase === 'leaving') { state.barrageTruck = null; break; }
+    truck.phase = truck.phase === 'entering' ? 'raising' : truck.phase === 'raising' ? 'firing' : 'leaving';
+    truck.age = 0;
   }
-  truck.fireAcc += truck.age - Math.max(oldAge, BARRAGE.travelSeconds);
-  while (truck.fireAcc >= BARRAGE.shotInterval && truck.shots < BARRAGE.rockets) {
-    truck.fireAcc -= BARRAGE.shotInterval;
-    const alive = enemy.buildings.filter(b => !b.destroyed);
-    if (!alive.length) { state.barrageTruck = null; return; }
-    const intended = enemy.buildings.find(b => b.uid === truck.targets[truck.shots]);
-    const target = intended && !intended.destroyed ? intended : alive.reduce((best,b) => Math.abs(b.x-(intended?.x ?? end)) < Math.abs(best.x-(intended?.x ?? end)) ? b : best);
-    // Deterministic spread stays within the selected building footprint.
-    const jitter = direction * (Math.sin((truck.shots + 1) * 127.1) * 0.5) * BUILDINGS[target.type].w;
-    const missile = spawnMissile(state, 2, target.x + jitter, truck.x);
-    match.missiles.push(missile);
-    truck.shots++;
-    audio.launch(2, panFor(match, truck.x));
+}
+
+function barrageTargets(match: Match, state: SideState): { x: number; uid?: number }[] {
+  const enemy = state.side === 'player' ? match.enemy : match.player;
+  const direction = state.side === 'player' ? -1 : 1;
+  const alive = enemy.buildings.filter(b => !b.destroyed).sort((a, b) => direction * (a.x - b.x));
+  if (alive.length) {
+    return Array.from({ length: BARRAGE.rockets }, (_, i) => {
+      const building = alive[Math.floor(i * alive.length / BARRAGE.rockets)];
+      const spread = direction * Math.sin((i + 1) * 127.1) * BUILDINGS[building.type].w * 0.25;
+      return { uid: building.uid, x: building.x + spread };
+    });
   }
-  if (truck.shots >= BARRAGE.rockets) state.barrageTruck = null;
+  const zone = state.side === 'player' ? WORLD.cityLeft : WORLD.cityRight;
+  const span = (BARRAGE.rockets - 1) * 5;
+  const offset = hash01(state.barrageTrips * 73) * (zone.x1 - zone.x0 - span);
+  const first = direction < 0 ? zone.x1 - offset : zone.x0 + offset;
+  return Array.from({ length: BARRAGE.rockets }, (_, i) => ({ x: first + direction * i * 5 }));
 }

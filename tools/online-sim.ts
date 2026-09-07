@@ -3,6 +3,7 @@ import { AA, MATCH, WORLD } from '../src/core/config';
 import { defaultMeta } from '../src/core/storage';
 import { stepMatch } from '../src/game/engine';
 import {
+  syncDefenceLimits,
   buyAaRadius,
   buyAmmo,
   buyBattery,
@@ -289,3 +290,10 @@ assert(!parseOnlineAction({type:'buy-ammo',batteryType:2,count:101}));
 assert(applyRemoteAction(support,fairMeta,{type:'buy-ammo',batteryType:2,count:100}));
 assert.equal(support.enemy.ammo[2],100);
 console.log('PASS: online barrage purchase and 100-round orders');
+
+const capMatch=createOnlineMatch('caps',Infinity);
+capMatch.time=capMatch.limitStep*2;syncDefenceLimits(capMatch);capMatch.enemy.money=100000;
+for(let i=0;i<3;i++) assert(applyRemoteAction(capMatch,fairMeta,{type:'build-battery',batteryType:5,x:2600}));
+assert(!applyRemoteAction(capMatch,fairMeta,{type:'build-battery',batteryType:5,x:2600}));
+assert(capMatch.enemy.batteries.every(b=>b.x===WORLD.width-2600));
+console.log('PASS: online stacked defences respect the raised cap');

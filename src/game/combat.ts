@@ -173,10 +173,10 @@ export function missileAt(m: Missile, t: number): { x: number; y: number } {
   return missileOnRoute(m, t, missileRoute(m));
 }
 
-export function spawnMissile(state: SideState, tier: number, targetX: number, originX?: number): Missile {
+export function spawnMissile(state: SideState, tier: number, targetX: number, originX?: number, originY?: number): Missile {
   const def = MISSILES[tier - 1];
   const x0 = originX ?? launchPadX(state.side);
-  const y0 = WORLD.groundY - 14;
+  const y0 = originY ?? WORLD.groundY - 14;
   const ty = WORLD.groundY;
   const route = missileRoute({ x0, y0, tx: targetX, ty, tier });
   // Timing comes from the reference shape flown from the old pad in front of

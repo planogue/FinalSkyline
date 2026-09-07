@@ -75,7 +75,7 @@ short types take the front row and tall ones the back purely so the skyline neve
 hides itself. A levelled building frees its plot and its slot in the cap, so you can
 always rebuild — and rebuilding under fire is the main drain on a losing side's economy.
 
-**Anti-air** — a radar plus five interceptor tiers, max two of each.
+**Anti-air** — a radar plus five interceptor tiers, initially two of each. Every two building-limit increases add one to each defence cap.
 A tier `N` battery **only** stops a tier `N` missile, so a mixed salvo forces you to have
 all five loaded at once. Each type has its own colour, its own radius ring, and its own
 reload. The radar does not shoot: it buys early warning, showing impact markers seconds
@@ -203,9 +203,9 @@ saved up cannot skip straight to the biggest warhead.
 
 ### Emplacements
 
-Every radar and anti-air system needs its own space, including the final tier.
-Placements closer than `AA_MIN_SPACING` (56 world units) to any existing system
-are rejected without charging cash. This rule applies to players and bots.
+Radars and anti-air systems may share exactly the same position, with no combined
+stack limit. Each type starts with a cap of two; every two building-limit increases
+raise that cap by one, reaching three and then four of each type.
 
 Tuning the game means editing `src/core/config.ts` and re-running `npm run sim`.
 
@@ -393,10 +393,13 @@ with a chip in the status bar.
 
 Cities now have 1,600 world units of land and 56 plots in each building layer.
 The one-time $2,000 barrage truck upgrade is beside radar intelligence (Upgrades → E → 2).
-A truck arrives every 150 seconds, drives toward the centre for 12 seconds, then fires
-24 tier-II rockets at 0.12-second intervals. Shots are divided across surviving buildings
-from front to back, with spread within their footprints; destroyed targets are reassigned.
-Hawk systems can intercept these rockets. Peace prevents the truck from firing.
+The first truck deploys immediately on purchase; further deployments occur every
+150 seconds. It drives in from beyond the battlefield, raises its 24-tube launcher,
+and fires one tier-II rocket every 0.5 seconds before lowering the launcher and
+driving back off-screen. Targets are chosen when firing begins, divided across
+surviving buildings from front to back. With no buildings, a random sweep crosses
+enemy land in five-metre steps. Hawk systems can intercept the rockets, and peace
+prevents firing. A green winning countdown mirrors the opponent’s defeat timer.
 Radar intelligence reveals every enemy radar and anti-air emplacement; all stay hidden
 until purchased. ABM magazines hold 100 rounds per type; X cycles purchase quantities
 through 1, 5, 10, 20, 50 and 100.

@@ -161,6 +161,7 @@ function makeSide(side: Side, name: string): SideState {
     buildings: [],
     batteries: [],
     aaOwned: AA.map(() => 0),
+    aaLimit: AA_MAX_PER_TYPE,
     ammo: AA.map(() => 0),
     aaRadiusBonus: AA.map(() => 0),
     aaReloadBonus: AA.map(() => 0),
@@ -175,6 +176,7 @@ function makeSide(side: Side, name: string): SideState {
     barrageOwned: false,
     barrageTimer: 0,
     barrageTruck: null,
+    barrageTrips: 0,
     pending: [],
     queued: [],
     wipeoutTimer: 0,
@@ -215,6 +217,7 @@ export function createOnlineMatch(opponentName: string, durationSeconds: number,
   match.time = Math.max(0, Math.min(durationSeconds - 0.1, elapsedSeconds));
   match.incomeAcc = match.time % MATCH.incomeIntervalSeconds;
   match.lastLimitStep = limitSteps(match);
+  syncDefenceLimits(match);
   return match;
 }
 
@@ -267,7 +270,7 @@ export function incomePerTick(state: SideState): number {
 
 export function aaCost(state: SideState, type: number): number {
   const owned = state.aaOwned[type];
-  if (owned >= AA_MAX_PER_TYPE) return Infinity;
+  if (owned >= state.aaLimit) return Infinity;
   return AA[type].costs[Math.min(owned, AA[type].costs.length - 1)];
 }
 
@@ -338,13 +341,13 @@ export function deployZone(side: Side): { x0: number; x1: number } {
 
 const AA_DEPLOY_MARGIN = 150;
 
-/** Minimum separation between all radar and anti-air systems. */
+/** Preferred spacing for bot placements; player systems may share a position. */
 export const AA_MIN_SPACING = 56;
 
 export function canDeployAt(state: SideState, x: number, _type?: number): boolean {
   const zone = deployZone(state.side);
   if (!Number.isFinite(x) || x < zone.x0 || x > zone.x1) return false;
-  return spreadOut(state, x);
+  return true;
 }
 
 /** Places a battery at x. Pass no x for a random spot in the side's own land. */
@@ -608,10 +611,17 @@ export function buyBarrage(state: SideState): boolean {
   state.money -= BARRAGE.cost;
   state.stats.spent += BARRAGE.cost;
   state.barrageOwned = true;
-  state.barrageTimer = BARRAGE.interval;
+  state.barrageTimer = 0;
   return true;
 }
 
 export function visibleEnemyDefences(state: SideState, intel: boolean): boolean {
   return state.side === 'player' || intel;
+}
+
+/** Each pair of building-cap milestones adds one of every defence type. */
+export function syncDefenceLimits(match: Match): void {
+  const limit = AA_MAX_PER_TYPE + Math.floor(limitSteps(match) / 2);
+  match.player.aaLimit = limit;
+  match.enemy.aaLimit = limit;
 }

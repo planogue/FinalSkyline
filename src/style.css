@@ -1168,3 +1168,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible {
     font-size: 16px;
   }
 }
+
+.wipeout.winning { color: #64ed96; }
+.wipeout.winning .wipeout-label, .wipeout.winning .wipeout-count { color: #64ed96; text-shadow: 0 2px 16px rgba(32, 215, 105, .4); }
+
+.counting-down .toast { top: calc(var(--top-h, 52px) + 150px); }

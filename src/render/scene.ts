@@ -1,5 +1,5 @@
-import { AA, BUILDINGS, MATCH, MISSILES, WORLD } from '../core/config';
-import type { AaBattery, Building, MetaSave } from '../core/types';
+import { AA, BARRAGE, BUILDINGS, MATCH, MISSILES, WORLD } from '../core/config';
+import type { AaBattery, Building, MetaSave, SideState } from '../core/types';
 import { standingFraction } from '../game/combat';
 import { aaRadius, visibleEnemyDefences, hash01, launchPadX, type Match } from '../game/state';
 import { Camera } from './camera';
@@ -63,22 +63,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, match: Match, cam: Came
 
   drawGround(ctx, cam, night);
 
-  for (const side of [match.player, match.enemy]) {
-    const truck = side.barrageTruck;
-    if (!truck) continue;
-    ctx.save();
-    ctx.translate(cam.toScreenX(truck.x), cam.groundScreenY());
-    ctx.scale(cam.scale * (side.side === 'player' ? -1 : 1), cam.scale);
-    ctx.fillStyle = '#526743'; ctx.fillRect(-30, -27, 60, 20);
-    ctx.fillStyle = '#91bdc5'; ctx.fillRect(15, -24, 12, 10);
-    ctx.fillStyle = '#171c22';
-    for (const x of [-20, -6, 21]) { ctx.beginPath(); ctx.arc(x, -5, 7, 0, Math.PI*2); ctx.fill(); }
-    ctx.save(); ctx.translate(-7,-27); ctx.rotate(-0.45);
-    ctx.fillStyle = '#374b30'; ctx.fillRect(-22,-11,40,12);
-    ctx.strokeStyle = '#87977a';
-    for (let i=0;i<4;i++) ctx.strokeRect(-22, -11+i*3, 40, 3);
-    ctx.restore(); ctx.restore();
-  }
+  for (const side of [match.player, match.enemy]) drawBarrageTruck(ctx, cam, side, night);
 
   if (opts.showRings) drawRings(ctx, cam, match, opts.meta);
 
@@ -1021,4 +1006,84 @@ function withAlpha(color: string, a: number): string {
     return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${clamped})`;
   }
   return color;
+}
+
+/** A six-axle missile carrier with a hinged, 24-tube launcher rack. */
+function drawBarrageTruck(ctx: CanvasRenderingContext2D, cam: Camera, side: SideState, night: number): void {
+  const truck = side.barrageTruck;
+  if (!truck) return;
+  const sx = cam.toScreenX(truck.x);
+  if (sx < -160 * cam.scale || sx > cam.viewW + 160 * cam.scale) return;
+  const moving = truck.phase === 'entering' || truck.phase === 'leaving';
+  const elevation = truck.phase === 'raising' ? truck.age / BARRAGE.elevationSeconds
+    : truck.phase === 'lowering' ? 1 - truck.age / BARRAGE.elevationSeconds
+    : truck.phase === 'firing' ? 1 : 0;
+  const facing = (side.side === 'player' ? -1 : 1) * (truck.phase === 'leaving' ? -1 : 1);
+  ctx.save();
+  ctx.translate(sx, cam.groundScreenY());
+  ctx.scale(cam.scale * facing, cam.scale);
+  // Ground shadow and dust trail behind the moving carrier.
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  ctx.beginPath(); ctx.ellipse(0, -1, 78, 5, 0, 0, Math.PI * 2); ctx.fill();
+  if (moving) {
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = 'rgba(164,151,122,' + (0.16 - i * 0.025) + ')';
+      ctx.beginPath(); ctx.ellipse(-77 - i * 12, -5 - i * 2, 12 + i * 3, 4 + i, 0, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  const body = ctx.createLinearGradient(0, -43, 0, -12);
+  body.addColorStop(0, night > 0.5 ? '#596750' : '#87946e');
+  body.addColorStop(0.55, '#4d5e41'); body.addColorStop(1, '#29372a');
+  ctx.fillStyle = '#20282a'; ctx.fillRect(-71, -19, 139, 8);
+  ctx.fillStyle = body; ctx.fillRect(-69, -34, 102, 16);
+  // Trailer deck, fuel tanks, reinforcing ribs and coupling.
+  ctx.fillStyle = '#a0a989'; ctx.fillRect(-70, -36, 103, 3);
+  ctx.fillStyle = '#354333'; ctx.fillRect(-56, -23, 22, 10); ctx.fillRect(-22, -23, 22, 10);
+  ctx.strokeStyle = '#a3aa8e'; ctx.lineWidth = 1;
+  for (let x = -65; x < 25; x += 18) ctx.strokeRect(x, -32, 14, 9);
+  // Angular armoured cab and panoramic split windscreen.
+  ctx.fillStyle = body; ctx.beginPath(); ctx.moveTo(32, -18); ctx.lineTo(32, -49);
+  ctx.lineTo(53, -49); ctx.lineTo(66, -36); ctx.lineTo(72, -19); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#aeb9a0'; ctx.fillRect(33, -50, 20, 3);
+  const glass = ctx.createLinearGradient(0, -46, 0, -31);
+  glass.addColorStop(0, '#b8d8dc'); glass.addColorStop(1, '#344f5b'); ctx.fillStyle = glass;
+  ctx.fillRect(36, -45, 13, 14);
+  ctx.beginPath(); ctx.moveTo(52,-45); ctx.lineTo(61,-36); ctx.lineTo(63,-31); ctx.lineTo(52,-31); ctx.fill();
+  ctx.strokeStyle = '#1c2a28'; ctx.strokeRect(34,-47,17,27);
+  ctx.fillStyle = '#c3cab5'; ctx.fillRect(37,-28,5,2);
+  ctx.fillStyle = '#161d20'; for (let y=-30;y<-21;y+=3) ctx.fillRect(64,y,5,1);
+  ctx.fillStyle = '#fce7a0'; ctx.fillRect(68,-23,4,3);
+  ctx.fillStyle = '#182124'; ctx.fillRect(62,-17,12,4);
+  ctx.strokeStyle = '#3d4846'; ctx.beginPath();ctx.moveTo(61,-39);ctx.lineTo(70,-43);ctx.stroke();ctx.fillRect(69,-46,3,6);
+  // Six wheels, hubs, bolts and rotating tread marks.
+  for (const x of [-59,-40,-21,1,42,60]) {
+    ctx.fillStyle = '#141a1e'; ctx.beginPath();ctx.arc(x,-10,10,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle = '#30383b';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,-10,8,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle = '#697464';ctx.beginPath();ctx.arc(x,-10,4.5,0,Math.PI*2);ctx.fill();
+    for(let i=0;i<5;i++) { const a=i*Math.PI*2/5+(moving?truck.x/10:0);ctx.fillStyle='#c0c7b9';ctx.fillRect(x+Math.cos(a)*2.7-0.6,-10+Math.sin(a)*2.7-0.6,1.2,1.2); }
+  }
+  // Deploy stabilisers before elevating the rack.
+  if (!moving) {ctx.strokeStyle='#67775f';ctx.lineWidth=3;for(const x of [-56,20]){ctx.beginPath();ctx.moveTo(x,-23);ctx.lineTo(x+5,-3);ctx.stroke();ctx.fillStyle='#26312c';ctx.fillRect(x,-4,13,3);}}
+  const angle = -0.65 * Math.max(0, Math.min(1, elevation));
+  // Visible hydraulic piston follows the rack's rising front end.
+  ctx.strokeStyle='#25332a';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(-6,-31);ctx.lineTo(-16+24*Math.cos(angle),-39+24*Math.sin(angle));ctx.stroke();
+  ctx.strokeStyle='#b8c2b7';ctx.lineWidth=2;ctx.stroke();
+  ctx.save();ctx.translate(-16,-39);ctx.rotate(angle);
+  const rack=ctx.createLinearGradient(0,-21,0,1);rack.addColorStop(0,'#a0ab85');rack.addColorStop(1,'#39482f');
+  ctx.fillStyle=rack;ctx.fillRect(-48,-22,82,24);
+  ctx.strokeStyle='#263629';ctx.lineWidth=1;
+  // Four banks of six pipes: every mouth is individually visible.
+  for(let row=0;row<4;row++) {
+    ctx.strokeRect(-46,-20+row*5.3,74,4.3);
+    for(let col=0;col<6;col++) {
+      const index=row*6+col;const x=12+col*3.6;const y=-18+row*5.2;
+      ctx.fillStyle=index<truck.shots?'#111917':'#283c2b';ctx.beginPath();ctx.ellipse(x,y,1.5,2,0,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#b2b99b';ctx.lineWidth=.6;ctx.stroke();
+    }
+  }
+  ctx.fillStyle='#3b4a36';ctx.fillRect(-34,-23,4,26);ctx.fillRect(4,-23,4,26);
+  if(truck.phase==='firing'&&truck.shots>0&&truck.fireAcc<0.12) {
+    ctx.fillStyle='#fff1a0';ctx.beginPath();ctx.moveTo(35,-16);ctx.lineTo(52,-10);ctx.lineTo(35,-5);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();ctx.restore();
 }

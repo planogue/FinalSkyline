@@ -4,28 +4,34 @@ import { defaultMeta } from '../src/core/storage';
 import { updateBot } from '../src/game/bot';
 import { missileAt, spawnMissile, updateDefences, updateInterceptors, updateMissiles } from '../src/game/combat';
 import { stepMatch, updateBarrage } from '../src/game/engine';
-import { buyBarrage, buyAmmo, buyRadarIntel, visibleEnemyDefences, buildingPlacementAt, AA_MIN_SPACING, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
+import { buyBarrage, buyAmmo, buyRadarIntel, visibleEnemyDefences, buildingPlacementAt, syncDefenceLimits, buyBattery, buyBuilding, buyMissileUpgrade, canDeployAt, createMatch, launchPadReferenceX, launchPadX, missileReload, pinTarget, commitQueue } from '../src/game/state';
 
 const meta = defaultMeta();
 
-// Check every incoming tier against every existing radar or launcher.
-for (let existing = 0; existing < AA.length; existing++) {
-  for (let incoming = 0; incoming < AA.length; incoming++) {
-    const match = createMatch('easy', 300);
-    const state = match.player;
-    state.money = 100000;
-    assert(buyBattery(state, existing, 2600));
-    const cash = state.money;
-    for (const offset of [0, 1, -1, AA_MIN_SPACING - 1, 1 - AA_MIN_SPACING]) {
-      assert.equal(canDeployAt(state, 2600 + offset, incoming), false);
-      assert.equal(buyBattery(state, incoming, 2600 + offset), false);
-    }
-    assert.equal(state.money, cash, 'Rejected overlap must not charge cash');
-    assert.equal(state.batteries.length, 1);
-    assert(buyBattery(state, incoming, 2600 + AA_MIN_SPACING));
-    assert.equal(state.batteries[1].x, 2600 + AA_MIN_SPACING);
-  }
+// All defence types may stack at exactly one point, up to their own cap.
+const stacked = createMatch('easy',300);
+stacked.player.money=100000;
+for(let type=0;type<AA.length;type++) {
+  assert(buyBattery(stacked.player,type,2600));
+  assert(buyBattery(stacked.player,type,2600));
+  assert(!buyBattery(stacked.player,type,2600));
 }
+assert.equal(stacked.player.batteries.length,12);
+assert(stacked.player.batteries.every(b=>b.x===2600));
+for(const step of [0,1,2,3,4]) {
+ stacked.time=step*stacked.limitStep;
+ syncDefenceLimits(stacked);
+ assert.equal(stacked.player.aaLimit,2+Math.floor(step/2));
+ assert.equal(stacked.enemy.aaLimit,stacked.player.aaLimit);
+ if(step===2||step===4) {
+  for(let type=0;type<AA.length;type++) {
+   assert(buyBattery(stacked.player,type,2600));
+   assert(!buyBattery(stacked.player,type,2600));
+  }
+ }
+}
+assert.equal(stacked.player.batteries.length,24);
+
 const spacing = createMatch('easy', 300);
 spacing.player.money = 100000;
 for (const x of [NaN, Infinity, WORLD.cityLeft.x0, WORLD.cityRight.x1 + 400]) {
@@ -311,7 +317,7 @@ try {
   Math.random = random;
 }
 console.table(rows);
-console.log('PASS: non-overlapping emplacements, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');
+console.log('PASS: stacked emplacements and growing defence limits, purchase costs, reload floor, five-second launches, precise overhead trajectories, interception, single construction, and regular attacks.');
 
 // Support ownership, balanced targeting, cooldown, and ordinary interception metadata.
 for (const count of [1, 2, 4]) {
@@ -324,9 +330,11 @@ for (const count of [1, 2, 4]) {
   assert(buyBarrage(battle.player));
   assert.equal(battle.player.money,8000);
   assert.equal(buyBarrage(battle.player),false);
-  for (let i=0;i<1490;i++) updateBarrage(battle,battle.player,0.1);
-  assert.equal(battle.player.barrageTruck,null);
-  for (let i=0;i<170;i++) updateBarrage(battle,battle.player,0.1);
+  updateBarrage(battle,battle.player,0.1);
+  assert.equal(battle.player.barrageTruck?.phase,'entering');
+  assert(battle.player.barrageTruck!.x>WORLD.width,'Truck starts beyond the battlefield');
+  assert.equal(battle.player.barrageTruck?.targets.length,0);
+  for(let i=0;i<399;i++) updateBarrage(battle,battle.player,0.1);
   assert.equal(battle.missiles.length,24);
   assert.equal(battle.player.stats.launched,24);
   const targets = [...battle.enemy.buildings].sort((a,b)=>b.x-a.x);
@@ -362,10 +370,10 @@ retarget.time=121;retarget.player.money=10000;retarget.enemy.money=10000;
 assert(buyBuilding(retarget,retarget.enemy,0,800));
 assert(buyBuilding(retarget,retarget.enemy,0,1200));
 assert(buyBarrage(retarget.player));retarget.player.barrageTimer=0;
-updateBarrage(retarget,retarget.player,12.15);
+updateBarrage(retarget,retarget.player,14);
 const doomed=retarget.enemy.buildings.find(b=>b.x>1000)!;
 doomed.destroyed=true;doomed.hp=0;
-updateBarrage(retarget,retarget.player,3);
+updateBarrage(retarget,retarget.player,12);
 assert.equal(retarget.missiles.length,24);
 const survivor=retarget.enemy.buildings.find(b=>!b.destroyed)!;
 assert(retarget.missiles.slice(1).every(m=>Math.abs(m.tx-survivor.x)<BUILDINGS[0].w/2));
@@ -376,7 +384,7 @@ assert(buyBuilding(intercepted,intercepted.enemy,8,800));
 const target=intercepted.enemy.buildings[0];
 assert(buyBattery(intercepted.enemy,2,target.x));intercepted.enemy.ammo[2]=100;
 assert(buyBarrage(intercepted.player));intercepted.player.barrageTimer=0;
-updateBarrage(intercepted,intercepted.player,12.15);
+updateBarrage(intercepted,intercepted.player,14);
 const rocket=intercepted.missiles[0];
 for(let t=0;!rocket.dead&&t<rocket.flightTime+1;t+=1/60){
  updateDefences(intercepted,1/60,meta);updateInterceptors(intercepted,1/60);updateMissiles(intercepted,1/60);
@@ -384,3 +392,32 @@ for(let t=0;!rocket.dead&&t<rocket.flightTime+1;t+=1/60){
 assert.equal(intercepted.enemy.stats.intercepted,1,'Hawk intercepts a truck rocket');
 assert.equal(target.hp,target.maxHp);
 console.log('PASS: expanded land, retargeting and truck rocket interception');
+
+// Plan at the firing position, including empty-land sweeps, and stow before exit.
+const empty=createMatch('easy',Infinity);empty.time=121;empty.player.money=10000;
+assert(buyBarrage(empty.player));updateBarrage(empty,empty.player,12);
+assert.equal(empty.player.barrageTruck?.phase,'raising');
+assert.equal(empty.player.barrageTruck?.targets.length,0);
+updateBarrage(empty,empty.player,2);
+assert.equal(empty.missiles.length,1);
+updateBarrage(empty,empty.player,0.49);assert.equal(empty.missiles.length,1);
+updateBarrage(empty,empty.player,0.01);assert.equal(empty.missiles.length,2);
+updateBarrage(empty,empty.player,11);
+assert.equal(empty.missiles.length,24);
+for(let i=0;i<24;i++) {
+ assert(empty.missiles[i].tx>=WORLD.cityLeft.x0&&empty.missiles[i].tx<=WORLD.cityLeft.x1);
+ if(i) assert(Math.abs(Math.abs(empty.missiles[i].tx-empty.missiles[i-1].tx)-5)<1e-7);
+}
+assert.equal(empty.player.barrageTruck?.phase,'lowering');
+updateBarrage(empty,empty.player,1.5);
+assert.equal(empty.player.barrageTruck?.phase,'leaving');
+const departureX=empty.player.barrageTruck!.x;
+updateBarrage(empty,empty.player,6);
+assert(empty.player.barrageTruck!.x>departureX);
+updateBarrage(empty,empty.player,6);assert.equal(empty.player.barrageTruck,null);
+const arrival=createMatch('easy',Infinity);arrival.time=121;arrival.player.money=10000;arrival.enemy.money=10000;
+assert(buyBarrage(arrival.player));updateBarrage(arrival,arrival.player,10);
+assert(buyBuilding(arrival,arrival.enemy,0,800));
+updateBarrage(arrival,arrival.player,4);
+assert(Math.abs(arrival.missiles[0].tx-arrival.enemy.buildings[0].x)<BUILDINGS[0].w/2,'New building chosen after truck arrival');
+console.log('PASS: immediate deployment, half-second firing, arrival targeting, empty sweep and animated departure');

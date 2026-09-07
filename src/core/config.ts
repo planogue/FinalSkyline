@@ -394,4 +394,4 @@ export const BOT_NAMES = [
   'Kaya Lindqvist', 'Ruslan Aliyev', 'Nadia Farouk', 'Tomas Reyes', 'Ada Ghali',
 ];
 
-export const BARRAGE = { cost: 2000, interval: 150, rockets: 24, shotInterval: 0.12, travelSeconds: 12 } as const;
+export const BARRAGE = { cost: 2000, interval: 150, rockets: 24, shotInterval: 0.5, travelSeconds: 12, elevationSeconds: 1.5 } as const;

@@ -125,6 +125,7 @@ export interface SideState {
   batteries: AaBattery[];
   /** Owned count per AA type. */
   aaOwned: number[];
+  aaLimit: number;
   /** Interceptor rounds in stock per AA type. */
   ammo: number[];
   /** Extra radius bought during this match, per AA type. */
@@ -147,7 +148,15 @@ export interface SideState {
   radarIntel: boolean;
   barrageOwned: boolean;
   barrageTimer: number;
-  barrageTruck: { x: number; age: number; shots: number; fireAcc: number; targets: number[] } | null;
+  barrageTrips: number;
+  barrageTruck: {
+    x: number;
+    phase: 'entering' | 'raising' | 'firing' | 'lowering' | 'leaving';
+    age: number;
+    shots: number;
+    fireAcc: number;
+    targets: { x: number; uid?: number }[];
+  } | null;
   /** Pending launches waiting for their tier's launcher to free up. */
   pending: QueuedShot[];
   /** Targets pinned but not yet committed with Fight. */

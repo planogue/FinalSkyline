@@ -366,7 +366,7 @@ function handleWorldAction(worldX: number, quiet = false): void {
         refuse(
           worldX < zone.x0 || worldX > zone.x1
             ? 'That is not your land'
-            : 'Too close to another radar or anti-air system',
+            : 'Choose a position on your land',
         );
         return;
       }

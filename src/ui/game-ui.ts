@@ -1,6 +1,5 @@
 import {
   AA,
-  AA_MAX_PER_TYPE,
   BUILDINGS,
   BOTS,
   MATCH,
@@ -414,6 +413,7 @@ export class GameUI {
       this.fightBtn.style.display = 'none';
       this.hintEl.style.display = 'none';
       this.wipeoutEl.style.display = 'none';
+      this.root.classList.remove('counting-down');
     }
 
     this.syncOverlay(inGame ? match : null, meta);
@@ -460,7 +460,10 @@ export class GameUI {
    * clock — so the number on screen is the one that will actually end the match.
    */
   private syncWipeout(match: Match): void {
-    const timer = match.player.wipeoutTimer;
+    const winning = match.player.wipeoutTimer <= 0 && match.enemy.wipeoutTimer > 0;
+    const timer = winning ? match.enemy.wipeoutTimer : match.player.wipeoutTimer;
+    this.wipeoutEl.classList.toggle('winning', winning);
+    this.root.classList.toggle('counting-down', timer > 0 && match.phase === 'playing');
     if (timer <= 0 || match.phase !== 'playing') {
       this.wipeoutEl.style.display = 'none';
       return;
@@ -471,7 +474,7 @@ export class GameUI {
     this.wipeoutEl.style.display = '';
     // Rubble left behind says the city was levelled; no plot ever taken says
     // this player simply never built one.
-    const label = match.player.buildings.length ? 'CITY LEVELLED — REBUILD NOW' : 'NO CITY — BUILD NOW';
+    const label = winning ? 'WINNING IN' : match.player.buildings.length ? 'CITY LEVELLED — REBUILD NOW' : 'NO CITY — BUILD NOW';
     this.wipeoutEl.innerHTML =
       `<div class="wipeout-label">${label}</div><div class="wipeout-count">${left}</div>`;
     // A flash on each new second, so it reads as a countdown out of the corner
@@ -735,7 +738,7 @@ export class GameUI {
         title:
           def.interceptsTier === 0
             ? 'Radar — early warning: impact markers appear seconds sooner and off-screen missiles get tracked'
-            : `${def.name} — ${interceptsWhat(def)}. Leave space between radars and anti-air systems`,
+            : `${def.name} — ${interceptsWhat(def)}. Systems can share exactly the same position`,
         onClick: () => {
           const match = this.host.match;
           if (!match) return;
@@ -746,9 +749,9 @@ export class GameUI {
             audio.click();
             return;
           }
-          if (match.player.aaOwned[def.id] >= AA_MAX_PER_TYPE) {
+          if (match.player.aaOwned[def.id] >= match.player.aaLimit) {
             audio.deny();
-            this.toast(`Max ${AA_MAX_PER_TYPE} of each system`);
+            this.toast(`Max ${match.player.aaLimit} of each system`);
             return;
           }
           const price = aaCost(match.player, def.id);
@@ -768,7 +771,7 @@ export class GameUI {
           const match = this.host.match;
           if (!match) return;
           const owned = match.player.aaOwned[def.id];
-          count.textContent = `${owned}/${AA_MAX_PER_TYPE}`;
+          count.textContent = `${owned}/${match.player.aaLimit}`;
           const price = aaCost(match.player, def.id);
           cost.textContent = !isFinite(price) ? 'MAX' : price === 0 ? 'Free +1' : `$${price}`;
           root.classList.toggle('dim', !isFinite(price) || match.player.money < price);
@@ -1047,7 +1050,7 @@ export class GameUI {
     help.innerHTML = `<summary style="cursor:pointer;font-weight:800;color:#dfe6ee;padding:6px 0">How it works</summary>
       <ul style="padding-left:18px;margin:6px 0">
         <li><b>Buildings</b> pay income every 2 seconds. Pick a type, then tap a free plot on your land to place it. Each type has a cap that rises by one every ${MATCH.limitStepSeconds / 60} minutes; a levelled building frees its slot so you can rebuild.</li>
-        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — max two of each — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it with room between it and every existing radar or anti-air system. Batteries can be bombed, and replaced once they are.</li>
+        <li><b>Anti-air</b> comes in five tiers plus a radar. A tier ${'Ⅰ'}–${'Ⅴ'} battery only stops the matching missile tier — initially two of each, plus one every two building-limit increases — and THAAD alone is quick enough to also knock down a Bunker Buster, if it is sited near where the warhead is aimed. Pick a system, then tap your own land to site it anywhere on your land, including on top of other systems. Batteries can be bombed, and replaced once they are.</li>
         <li><b>ABM rounds</b> are the ammunition. An empty battery cannot intercept anything.</li>
         <li><b>Upgrades</b> (in-match, paid in cash) widen defence radius, cut anti-air reload, and unlock heavier missiles.</li>
         <li><b>Attacking</b>: open ICBM, pick a tier, tap their city to pin targets, then hit Fight. Each tier launches on its own reload timer, and heavier tiers unlock one at a time — you cannot skip ahead to the big warheads.</li>
@@ -1726,13 +1729,13 @@ export class GameUI {
     });
     const truck = el('button', 'card split');
     truck.style.width = '190px';
-    truck.title = 'Barrage truck: 24 tier-II rockets every 150 seconds after purchase; $2000 once. First arrival after 150 seconds, then 12 seconds to drive into position. Intercepted by Hawk.';
+    truck.title = 'Barrage truck: 24 tier-II rockets every 150 seconds after purchase; $2000 once. Deploys immediately on purchase, then every 150 seconds. Drives in, raises 24 tubes, fires every 0.5 seconds and drives away. Intercepted by Hawk.';
     truck.innerHTML = '<div class="art" style="font-size:30px">🚚</div><div class="meta">Barrage truck</div><div class="cost"></div><div class="delta">24 rockets / 150s</div>';
     truck.addEventListener('click', () => {
       if (buyBarrage(match.player)) {
         this.host.sendOnlineAction({ type: 'barrage-upgrade' });
         audio.buy();
-        this.toast('Barrage truck purchased — arrives every 150 seconds');
+        this.toast('Truck on its way — next deployment in 150 seconds');
       } else { audio.deny(); this.toast(match.player.barrageOwned ? 'Barrage truck already owned' : 'Not enough cash'); }
     });
     this.upgradeUpdates.push(() => {

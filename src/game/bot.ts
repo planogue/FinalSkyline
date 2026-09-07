@@ -1,4 +1,4 @@
-import { AA, AA_MAX_PER_TYPE, BUILDINGS, MATCH, MISSILES, WORLD, type BotProfile } from '../core/config';
+import { AA, BUILDINGS, MATCH, MISSILES, WORLD, type BotProfile } from '../core/config';
 import type { MetaSave } from '../core/types';
 import {
   aaCost,
@@ -95,7 +95,7 @@ function defence(match: Match, p: BotProfile, meta: MetaSave, envelope: number, 
 
   // The two free systems are always worth taking.
   for (const type of [0, 1]) {
-    if (canBuild && bot.aaOwned[type] < p.freeDefenceLimit && bot.aaOwned[type] < AA_MAX_PER_TYPE && aaCost(bot, type) === 0) {
+    if (canBuild && bot.aaOwned[type] < p.freeDefenceLimit && bot.aaOwned[type] < bot.aaLimit && aaCost(bot, type) === 0) {
       if (buyBattery(bot, type)) canBuild = false;
     }
   }
@@ -113,7 +113,7 @@ function defence(match: Match, p: BotProfile, meta: MetaSave, envelope: number, 
     const type = tier; // AA index N intercepts tier N
     // Build the layer out to full strength as soon as it is affordable. Waiting
     // for proof that a tier is in play means the first salvo lands unopposed.
-    while (canBuild && bot.aaOwned[type] < AA_MAX_PER_TYPE) {
+    while (canBuild && bot.aaOwned[type] < bot.aaLimit) {
       const cost = aaCost(bot, type);
       if (!isFinite(cost) || cost > budget) break;
       const spot = bestDeploySpot(bot, type, aaRadius(bot, type, meta));
